@@ -29,15 +29,19 @@
  */
 
 #define LED_FL_ON() (LED_FL_PORT |= LED_FL_PIN)
+#define LED_FL_TOGGLE() (LED_FL_PORT ^= LED_FL_PIN)
 #define LED_FL_OFF() (LED_FL_PORT &= ~LED_FL_PIN)
 
 #define LED_FR_ON() (LED_FR_PORT |= LED_FR_PIN)
+#define LED_FR_TOGGLE() (LED_FR_PORT ^= LED_FR_PIN)
 #define LED_FR_OFF() (LED_FR_PORT &= ~LED_FR_PIN)
 
 #define LED_RL_ON() (LED_RL_PORT |= LED_RL_PIN)
+#define LED_RL_TOGGLE() (LED_RL_PORT ^= LED_RL_PIN)
 #define LED_RL_OFF() (LED_RL_PORT &= ~LED_RL_PIN)
 
 #define LED_RR_ON() (LED_RR_PORT |= LED_RR_PIN)
+#define LED_RR_TOGGLE() (LED_RR_PORT ^= LED_RR_PIN)
 #define LED_RR_OFF() (LED_RR_PORT &= ~LED_RR_PIN)
 
 // functions prototypes

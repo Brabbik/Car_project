@@ -5,19 +5,23 @@
 #include "include/ADC.h"
 #include "include/L3GD20H.h"
 #include "include/ADXL343.h"
+#include "include/motor.h"
 #include <stdbool.h>
 
 //#define SPI
 //#define I2C
 #define I2C_RX_BUFFER_SIZE 5
+#define COUNTER_VALUE 2094  // 2094 0.5s ~ 1 Hz
+#define COUNTER_100HZ 168    //  5ms ~ 100 Hz
 /**
  * main.c
  */
 void initClockTo16MHz(void);
 
 uint16_t results[5];
-uint16_t i, index, t_1ms;
+uint16_t i, index, duty_cycle;
 bool run, led;
+
 // I2C
 uint8_t RX_buffer[I2C_RX_BUFFER_SIZE] = {0};
 uint8_t RXByteCtr = 0;
@@ -30,16 +34,36 @@ uint8_t TransmitIndex = 0;
 int main(void)
 {
 	WDTCTL = WDTPW | WDTHOLD;	// stop watchdog timer
+	duty_cycle = 10;
 	
+	//CSCTL_H = CSKEY_H;          // select ACLK to use VLO clock source
+	//CSCTL2 |= SELA_VLOCLK;
+	//CSCTL0_H = 0;
+
 	initClockTo16MHz();
 	#ifdef SPI
 	    uint8_t SPIData;
 	    SPI_init();
 	#endif
 	    LED_init();
+	    M_init();
 	    led = true;
-	    t_1ms = 0;
+	  // test motoru
+	    M_DIR_1();
+	    M_START();
+	    //M_STOP();
+
 	  //  ADC_init();
+        TA0CCTL0 = CCIE;    //timer 0 capture/compare interrupt enable
+        TA0CCR0 = COUNTER_VALUE;
+        TA0CTL = TASSEL__ACLK + MC__UP + ID__8;
+        TA0CTL |= TAIE;
+
+        TA1CCTL0 = CCIE;    //timer 0 capture/compare interrupt enable
+        TA1CCR0 = COUNTER_100HZ;
+        TA1CTL = TASSEL__ACLK + MC__UP + ID__1;
+        TA1CTL |= TAIE;
+
 	    _BIS_SR(GIE);
 	#ifdef I2C
 	    I2C_init(0x20>>1);
@@ -54,23 +78,21 @@ int main(void)
 	    P1DIR |= 0x04;
 	    ADC12CTL0 |= ADC12SC;                   // Start convn - software trigger
 	//    P8DIR |= 0b101110;    // H bridge
-	    if(t_1ms > 16000000)
-	        {
-	        run = true;
-	        t_1ms = 0;
-	        led = !led;
-	        }
-	    else
-	        run = false;
-	    t_1ms++;
 
 
-	    while(run)
+	    while(true)
 	    {
-	        if (led)
-	          LED_FL_ON();
+	        if(duty_cycle >= 100)
+	            duty_cycle = 5;
+	        if(TA1R <= (duty_cycle * 2))
+	            M_START();
 	        else
-	          LED_FL_OFF();
+	            M_STOP();
+	          //LED_FL_ON();
+	          //LED_FR_ON();
+	          //LED_RL_ON();
+	          //LED_RR_ON();
+
 	 //       P8OUT = 0b001100;
 	 //       for (i = 5000; i!=0; i--);
 	 //       P8OUT = 0b0;    // OFF
@@ -99,6 +121,19 @@ int main(void)
 	#endif
 	     }
 	}
+
+void __attribute__ ((interrupt(TIMER0_A0_VECTOR))) Timer_A(){
+    LED_FL_TOGGLE();
+    LED_FR_TOGGLE();
+    LED_RL_TOGGLE();
+    LED_RR_TOGGLE();
+    duty_cycle += 5;
+    TA0CTL |= TACLR;
+}
+
+void __attribute__ ((interrupt(TIMER1_A0_VECTOR))) Timer_B(){
+    TA1CTL |= TACLR;
+}
 
 void initClockTo16MHz()
 {
