@@ -11,8 +11,8 @@
 //#define SPI
 //#define I2C
 #define I2C_RX_BUFFER_SIZE 5
-#define COUNTER_VALUE 2094  // 2094 0.5s ~ 1 Hz
-#define COUNTER_100HZ 168    //  5ms ~ 100 Hz
+#define COUNTER_VALUE 2048  // 2048 0.5s ~ 1 Hz //32 768
+#define COUNTER_100HZ 164    //  5ms ~ 100 Hz
 /**
  * main.c
  */
@@ -59,10 +59,21 @@ int main(void)
         TA0CTL = TASSEL__ACLK + MC__UP + ID__8;
         TA0CTL |= TAIE;
 
-        TA1CCTL0 = CCIE;    //timer 0 capture/compare interrupt enable
+
+        // setup timer TA1
+        TA1CTL |= TACLR;    //reset TA1
+        TA1CTL |= MC__UP;   //up mode
+        TA1CTL |= TASSEL__ACLK;     //chose clk 32kHz
         TA1CCR0 = COUNTER_100HZ;
-        TA1CTL = TASSEL__ACLK + MC__UP + ID__1;
-        TA1CTL |= TAIE;
+        TA1CCR1 = 160;
+
+        // setup compare irqs
+        TA1CCTL0 |= CCIE;       //local enable CCR0
+        TA1CCTL1 |= CCIE;       //local enable CCR1
+        __enable_interrupt();   //enable maskable interrupts
+
+        TA1CCTL0 &= ~CCIFG;    //clear flag CCR0
+        TA1CCTL1 &= ~CCIFG;    //clear flag CCR1
 
 	    _BIS_SR(GIE);
 	#ifdef I2C
@@ -82,12 +93,10 @@ int main(void)
 
 	    while(true)
 	    {
-	        if(duty_cycle >= 100)
+	        if(duty_cycle >= 160)
 	            duty_cycle = 5;
-	        if(TA1R <= (duty_cycle * 2))
-	            M_START();
-	        else
-	            M_STOP();
+	        //TA1CCR1 = 20;
+	        //TA1CCTL1
 	          //LED_FL_ON();
 	          //LED_FR_ON();
 	          //LED_RL_ON();
@@ -131,8 +140,16 @@ void __attribute__ ((interrupt(TIMER0_A0_VECTOR))) Timer_A(){
     TA0CTL |= TACLR;
 }
 
-void __attribute__ ((interrupt(TIMER1_A0_VECTOR))) Timer_B(){
-    TA1CTL |= TACLR;
+#pragma vector = TIMER1_A0_VECTOR     //isr for period
+__interrupt void ISR_TA1_CCR0(void){
+    M_START();
+    TA1CCTL0 &= ~CCIFG;    //clear flag CCR0
+}
+
+#pragma vector = TIMER1_A1_VECTOR       // isr flag duty cycle
+__interrupt void ISR_TA1_CCR1(void){
+    M_STOP();
+    TA1CCTL1 &= ~CCIFG;    //clear flag CCR1
 }
 
 void initClockTo16MHz()
