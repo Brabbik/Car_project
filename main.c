@@ -12,7 +12,7 @@
 //#define I2C
 #define I2C_RX_BUFFER_SIZE 5
 #define COUNTER_VALUE 2048  // 2048 0.5s ~ 1 Hz //32 768
-#define COUNTER_100HZ 164    //  5ms ~ 100 Hz
+#define COUNTER_100HZ 16001    //  5ms ~ 100 Hz      16000 no divider ~ 1 kHz
 /**
  * main.c
  */
@@ -20,7 +20,7 @@ void initClockTo16MHz(void);
 
 uint16_t results[5];
 uint16_t i, index, duty_cycle;
-bool run, led;
+bool slowdown;
 
 // I2C
 uint8_t RX_buffer[I2C_RX_BUFFER_SIZE] = {0};
@@ -34,7 +34,8 @@ uint8_t TransmitIndex = 0;
 int main(void)
 {
 	WDTCTL = WDTPW | WDTHOLD;	// stop watchdog timer
-	duty_cycle = 10;
+	duty_cycle = 20;
+	slowdown = false;
 	
 	//CSCTL_H = CSKEY_H;          // select ACLK to use VLO clock source
 	//CSCTL2 |= SELA_VLOCLK;
@@ -47,7 +48,6 @@ int main(void)
 	#endif
 	    LED_init();
 	    M_init();
-	    led = true;
 	  // test motoru
 	    M_DIR_1();
 	    M_START();
@@ -63,9 +63,10 @@ int main(void)
         // setup timer TA1
         TA1CTL |= TACLR;    //reset TA1
         TA1CTL |= MC__UP;   //up mode
-        TA1CTL |= TASSEL__ACLK;     //chose clk 32kHz
+        TA1CTL |= TASSEL__SMCLK;// + ID__8;     //chose clk 32kHz + ID divider /8
+        //TA1EX0 |= TAIDEX_7;               // IDEX second divider /8
         TA1CCR0 = COUNTER_100HZ;
-        TA1CCR1 = 160;
+        TA1CCR1 = 50;
 
         // setup compare irqs
         TA1CCTL0 |= CCIE;       //local enable CCR0
@@ -93,8 +94,11 @@ int main(void)
 
 	    while(true)
 	    {
-	        if(duty_cycle >= 160)
-	            duty_cycle = 5;
+	        if(duty_cycle >= 50)
+	            slowdown = true;
+	        if(duty_cycle <= 40)
+	            slowdown = false;
+	        TA1CCR1 = 160 * duty_cycle;
 	        //TA1CCR1 = 20;
 	        //TA1CCTL1
 	          //LED_FL_ON();
@@ -136,7 +140,10 @@ void __attribute__ ((interrupt(TIMER0_A0_VECTOR))) Timer_A(){
     LED_FR_TOGGLE();
     LED_RL_TOGGLE();
     LED_RR_TOGGLE();
-    duty_cycle += 5;
+    if(slowdown)
+        duty_cycle -=2;
+    else
+        duty_cycle += 2;
     TA0CTL |= TACLR;
 }
 
