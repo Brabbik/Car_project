@@ -12,12 +12,9 @@
 #define SPI
 //#define I2C
 #define I2C_RX_BUFFER_SIZE 5
-#define COUNTER_VALUE 2048  // 2048 0.5s ~ 1 Hz //32 768
-#define COUNTER_100HZ 16001    //  5ms ~ 100 Hz      16000 no divider ~ 1 kHz
+#define COUNTER_VALUE 2048      // 2048 0.5s ~ 1 Hz //32 768
 char txt[] = "ahoj";
-/**
- * main.c
- */
+
 void initClockTo16MHz(void);
 
 uint16_t results[5];
@@ -33,55 +30,60 @@ uint8_t TransmitBuffer[MAX_BUFFER_SIZE] = {0};
 uint8_t TXByteCtr = 0;
 uint8_t TransmitIndex = 0;
 */
+
+/******************************************************************/
+/*************************** main function ************************/
 int main(void)
 {
-	WDTCTL = WDTPW | WDTHOLD;	// stop watchdog timer
-	duty_cycle = 50;            // inicialize of duty_cycle
+	WDTCTL = WDTPW | WDTHOLD;	//stop watchdog timer
+	duty_cycle = 50;            //initialize of duty_cycle
 	slowdown = false;
-	
-	//CSCTL_H = CSKEY_H;          // select ACLK to use VLO clock source
-	//CSCTL2 |= SELA_VLOCLK;
-	//CSCTL0_H = 0;
+	volatile uint8_t SPIData;
+
+    #ifdef SPI
+        SPI_init();
+    #endif
 
 	initClockTo16MHz();
+	LED_init();                 //initialize of LEDs
+	M_init();                   //initialize of H bridge and PWM
 	SerialInit();
+
+    TA1CCTL0 = CCIE;            //timer A1 capture/compare interrupt enable
+    TA1CCR0 = COUNTER_VALUE;    //timer A1 freq 1 Hz
+    TA1CTL = TASSEL__ACLK + MC__UP + ID__8;
+    TA1CTL |= TAIE;
+    _BIS_SR(GIE);
+
+
+	    P1DIR |= 0x04;
+	    ADC12CTL0 |= ADC12SC;                   // Start convn - software trigger
+
+/******************************************************************/
+/************************** main loop *****************************/
+	    while(true)
+	    {
+	        if(duty_cycle >= 50)
+	            slowdown = true;
+	        if(duty_cycle <= 40)
+	            slowdown = false;
+	        M_set_duty_cycle(duty_cycle);
+	        SerialWrite();
+
 	#ifdef SPI
-	    uint8_t SPIData;
-	    SPI_init();
+	        SPIData = SPI_read_byte(WHO_AM_I | L3GD20H_READ);
 
+	        SPI_write_byte(CTRL1 | L3GD20H_WRITE, 0x0F);
+
+	        SPIData = SPI_read_byte(CTRL1 | L3GD20H_READ);
+
+	        //SPIData = SPI_read_byte(CTRL1 | L3GD20H_READ);
+	        //SPIData = 0;
+	        //SPIData = SPI_read_byte(OUT_X_L | L3GD20H_READ);
+            //SPIData += SPI_read_byte(OUT_X_H | L3GD20H_READ) << 8;
 	#endif
-	    LED_init();
-	    M_init();
-	  // test motoru
-	    M_DIR_1();
-	    M_START();
-	    //M_STOP();
 
-	  //  ADC_init();
-        TA0CCTL0 = CCIE;    //timer 0 capture/compare interrupt enable
-        TA0CCR0 = COUNTER_VALUE;
-        TA0CTL = TASSEL__ACLK + MC__UP + ID__8;
-        TA0CTL |= TAIE;
-
-
-        // setup timer TA1
-        TA1CTL |= TACLR;    //reset TA1
-        TA1CTL |= MC__UP;   //up mode
-        TA1CTL |= TASSEL__SMCLK;// + ID__8;     //chose clk 32kHz + ID divider /8
-        //TA1EX0 |= TAIDEX_7;               // IDEX second divider /8
-        TA1CCR0 = COUNTER_100HZ;
-        TA1CCR1 = duty_cycle;
-
-        // setup compare irqs
-        TA1CCTL0 |= CCIE;       //local enable CCR0
-        TA1CCTL1 |= CCIE;       //local enable CCR1
-        __enable_interrupt();   //enable maskable interrupts
-
-        TA1CCTL0 &= ~CCIFG;    //clear flag CCR0
-        TA1CCTL1 &= ~CCIFG;    //clear flag CCR1
-
-	    _BIS_SR(GIE);
-	#ifdef I2C
+    #ifdef I2C  // i2c init
 	    I2C_init(0x20>>1);
 	    _BIS_SR(GIE);
 	    P3DIR &= ~0x04;                            // P3.2 as input
@@ -91,42 +93,7 @@ int main(void)
 	    P3OUT |= 0x01;                            // ADXL343 CS pin to HIGH for I2C enable
 	    */
 	#endif
-	    P1DIR |= 0x04;
-	    ADC12CTL0 |= ADC12SC;                   // Start convn - software trigger
-	//    P8DIR |= 0b101110;    // H bridge
-
-
-	    while(true)
-	    {
-	        if(duty_cycle >= 50)
-	            slowdown = true;
-	        if(duty_cycle <= 40)
-	            slowdown = false;
-	        TA1CCR1 = 160 * duty_cycle;
-
-	        //TA1CCR1 = 20;
-	        //TA1CCTL1
-	          //LED_FL_ON();
-	          //LED_FR_ON();
-	          //LED_RL_ON();
-	          //LED_RR_ON();
-
-	 //       P8OUT = 0b001100;
-	 //       for (i = 5000; i!=0; i--);
-	 //       P8OUT = 0b0;    // OFF
-	 //       for (i = 5000; i!=0; i--);
-	//        P8OUT = 0b0001100;
-	        //for (i = 1000; i!=0; i--);
-	        //P8OUT = 0b0;    // OFF
-	        //for (i = 1000; i!=0; i--);
-
-	#ifdef SPI
-	        SPIData = SPI_read_byte(WHO_AM_I | L3GD20H_READ);
-	        SPIData = SPI_read_byte(CTRL1 | L3GD20H_READ);
-	        SPI_write_byte(CTRL1 | L3GD20H_WRITE, 0x0F);
-	        SPIData = SPI_read_byte(CTRL1 | L3GD20H_READ);
-	#endif
-	#ifdef I2C
+	#ifdef I2C  // i2c read/write
 	        __delay_cycles(1000);                     // Delay required between transaction
 	        I2C_write_byte(0x00, 0x00);             // wake up signal at address 0x00
 	        I2C_read_byte(0x00, 5);
@@ -137,33 +104,32 @@ int main(void)
 	        index = I2C_read_byte(BW_RATE);
 	        */
 	#endif
-	     }
-	}
+	     }      // end of main loop
+	}           // end of main function
 
-void __attribute__ ((interrupt(TIMER0_A0_VECTOR))) Timer_A(){
+void __attribute__ ((interrupt(TIMER1_A0_VECTOR))) Timer_A(){
     LED_FL_TOGGLE();
     LED_FR_TOGGLE();
     LED_RL_TOGGLE();
     LED_RR_TOGGLE();
-    SerialWrite();
     /*if(slowdown)
         duty_cycle -=2;
     else
         duty_cycle += 2;*/
-    TA0CTL |= TACLR;
+    TA1CTL |= TACLR;
 }
 
-#pragma vector = TIMER1_A0_VECTOR     //isr for period
-__interrupt void ISR_TA1_CCR0(void){
-    M_START();
-    TA1CCTL0 &= ~CCIFG;    //clear flag CCR0
+/*#pragma vector = TIMER0_A0_VECTOR     //isr for period
+__interrupt void ISR_TA0_CCR0(void){
+    //M_START();
+    TA0CCTL0 &= ~CCIFG;    //clear flag CCR0
 }
 
-#pragma vector = TIMER1_A1_VECTOR       // isr flag duty cycle
-__interrupt void ISR_TA1_CCR1(void){
-    M_STOP();
-    TA1CCTL1 &= ~CCIFG;    //clear flag CCR1
-}
+#pragma vector = TIMER0_A1_VECTOR       // isr flag duty cycle
+__interrupt void ISR_TA0_CCR1(void){
+    //M_STOP();
+    TA0CCTL2 &= ~CCIFG;    //clear flag CCR1
+}*/
 
 void initClockTo16MHz()
 {
