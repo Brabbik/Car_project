@@ -2,7 +2,7 @@
  * LED.h
  *
  *  Created on: 24. 9. 2020
- *      Author: dosedel
+ *      Author: brabenec, pohorsky
  */
 
 #ifndef LED_H_

@@ -18,8 +18,9 @@ char txt[] = "ahoj";
 void initClockTo16MHz(void);
 
 uint16_t results[5];
-uint16_t i, index, duty_cycle;
-bool slowdown;
+uint16_t index;
+int real_temp = 0;
+bool run;
 
 // I2C
 uint8_t RX_buffer[I2C_RX_BUFFER_SIZE] = {0};
@@ -36,12 +37,28 @@ uint8_t TransmitIndex = 0;
 int main(void)
 {
 	WDTCTL = WDTPW | WDTHOLD;	//stop watchdog timer
-	duty_cycle = 50;            //initialize of duty_cycle
-	slowdown = false;
+	uint8_t duty_cycle = 50;    //initialize of duty_cycle
 	volatile uint8_t SPIData;
+	volatile uint8_t sens_id, status, temp;
+	volatile uint16_t x_accel, y_accel, z_accel;
+	volatile int x_pos;
+	volatile uint8_t integr_samples;
 
     #ifdef SPI
         SPI_init();
+
+        SPI_write_byte(0x20, 0x0F);
+        //SPI_write_byte(0x20, 0x0F);
+        //sens_id = SPI_read_byte(WHO_AM_I | L3GD20H_READ);
+        //__delay_cycles(160000);
+        //sens_id = SPI_read_byte(CTRL1 | L3GD20H_READ);
+        //SPI_write_byte(CTRL2 | L3GD20H_WRITE, 0x80);
+        //__delay_cycles(160000);
+
+
+
+        //status = SPI_read_byte(STATUS | L3GD20H_READ);
+
     #endif
 
 	initClockTo16MHz();
@@ -53,34 +70,76 @@ int main(void)
     TA1CCR0 = COUNTER_VALUE;    //timer A1 freq 1 Hz
     TA1CTL = TASSEL__ACLK + MC__UP + ID__8;
     TA1CTL |= TAIE;
+
+    //TB0CCTL0 = CCIE;            //timer A1 capture/compare interrupt enable
+    //TB0CCR0 = 1600;    //timer A1 freq 1 Hz
+    //TB0CTL = TASSEL__SMCLK + MC__UP + ID__1;
+    //TB0CTL |= TAIE;
     _BIS_SR(GIE);
 
 
-	    P1DIR |= 0x04;
-	    ADC12CTL0 |= ADC12SC;                   // Start convn - software trigger
+	P1DIR |= 0x04;
+	ADC12CTL0 |= ADC12SC;                   // Start convn - software trigger
 
 /******************************************************************/
 /************************** main loop *****************************/
 	    while(true)
 	    {
-	        if(duty_cycle >= 50)
+	        run = false;
+	        /*if(duty_cycle >= 50)
 	            slowdown = true;
 	        if(duty_cycle <= 40)
-	            slowdown = false;
+	            slowdown = false;*/
 	        M_set_duty_cycle(duty_cycle);
-	        SerialWrite();
+	        //SerialWrite();
 
 	#ifdef SPI
-	        SPIData = SPI_read_byte(WHO_AM_I | L3GD20H_READ);
 
-	        SPI_write_byte(CTRL1 | L3GD20H_WRITE, 0x0F);
+	        //SPI_write_byte(0x21, 0xA7);
+	        //SPI_write_byte(CTRL1 | L3GD20H_WRITE, 0x0F);
+	        //sens_id = SPI_read_byte(WHO_AM_I | L3GD20H_READ);
+	        //status = SPI_read_byte(STATUS | L3GD20H_READ);
+	        if(sens_id == 0xD7)
+	            run = false;
 
-	        SPIData = SPI_read_byte(CTRL1 | L3GD20H_READ);
+
+	        x_accel = SPI_read_byte(OUT_X_L | L3GD20H_READ);
+	        x_accel += SPI_read_byte(OUT_X_H | L3GD20H_READ) << 8;
+	        //y_accel = SPI_read_byte(OUT_Y_L | L3GD20H_READ);
+	        //y_accel += SPI_read_byte(OUT_Y_H | L3GD20H_READ) << 8;
+	        //z_accel = SPI_read_byte(OUT_Z_L | L3GD20H_READ);
+	        //z_accel += SPI_read_byte(OUT_Z_H | L3GD20H_READ) << 8;
+	        if(integr_samples > 100){
+	            x_pos = 0;
+	            integr_samples = 0;
+	        }
+	        x_pos += (int)x_accel;
+	        /*if((x_accel & 0x8000) == 0)
+	            x_pos = x_accel;
+	        else
+	            x_pos = -(~x_accel + 1);*/
+	        integr_samples++;
+	        //if(x_pos > 100000)
+	          //  x_pos = 100000;
+	        //if(x_pos < -100000)
+	          //  x_pos = -100000;
+	        if(x_pos > 0){
+	            LED_FL_ON();
+	            LED_FR_OFF();
+	        }else{
+	            LED_FR_ON();
+	            LED_FL_OFF();
+	        }
 
 	        //SPIData = SPI_read_byte(CTRL1 | L3GD20H_READ);
+	        temp = SPI_read_byte(OUT_TEMP | L3GD20H_READ);
+	        //real_temp = temp & 0b01111111 * ((temp & 0b10000000)?(-1):(1)) + 127;
+	        //real_temp = 125 * (-temp + 127)/256 - 40;
+	        real_temp = (int)temp;
+	        //__delay_cycles(3200000);
+	        //x_accel = SPI_read_byte(0x80 | 0x28);
 	        //SPIData = 0;
-	        //SPIData = SPI_read_byte(OUT_X_L | L3GD20H_READ);
-            //SPIData += SPI_read_byte(OUT_X_H | L3GD20H_READ) << 8;
+
 	#endif
 
     #ifdef I2C  // i2c init
@@ -104,14 +163,15 @@ int main(void)
 	        index = I2C_read_byte(BW_RATE);
 	        */
 	#endif
-	     }      // end of main loop
+        }       // end of main loop
 	}           // end of main function
 
 void __attribute__ ((interrupt(TIMER1_A0_VECTOR))) Timer_A(){
-    LED_FL_TOGGLE();
-    LED_FR_TOGGLE();
+    //LED_FL_TOGGLE();
+    //LED_FR_TOGGLE();
     LED_RL_TOGGLE();
     LED_RR_TOGGLE();
+    run = true;
     /*if(slowdown)
         duty_cycle -=2;
     else
@@ -119,12 +179,12 @@ void __attribute__ ((interrupt(TIMER1_A0_VECTOR))) Timer_A(){
     TA1CTL |= TACLR;
 }
 
-/*#pragma vector = TIMER0_A0_VECTOR     //isr for period
-__interrupt void ISR_TA0_CCR0(void){
-    //M_START();
-    TA0CCTL0 &= ~CCIFG;    //clear flag CCR0
+#pragma vector = TIMER0_B0_VECTOR     //isr for period
+__interrupt void ISR_TB0_CCR0(void){
+    run = true;
+    TB0CCTL0 &= ~CCIFG;    //clear flag CCR0
 }
-
+/*
 #pragma vector = TIMER0_A1_VECTOR       // isr flag duty cycle
 __interrupt void ISR_TA0_CCR1(void){
     //M_STOP();
@@ -157,6 +217,7 @@ void initClockTo16MHz()
     }while (SFRIFG1&OFIFG);                         // Test oscillator fault flag
 }
 
+/*
 #pragma vector = USCI_B0_VECTOR
 __interrupt void USCI_B0_ISR(void)
 {
@@ -189,7 +250,7 @@ __interrupt void USCI_B0_ISR(void)
   case 12: break;                           // Vector 12: TXIFG
   default: break;
   }
-}
+}*/
 
 
 #pragma vector=ADC12_VECTOR

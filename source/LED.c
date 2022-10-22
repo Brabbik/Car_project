@@ -2,7 +2,7 @@
  * LED.c
  *
  *  Created on: 24. 9. 2020
- *      Author: dosedel
+ *      Author: brabenec, pohorsky
  */
 
 #include "include/LED.h"

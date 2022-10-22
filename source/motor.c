@@ -2,7 +2,7 @@
  * motor.c
  *
  *  Created on: 29. 9. 2020
- *      Author: dosedel
+ *      Author: brabenec, pohorsky
  */
 
 #include "include/motor.h"
