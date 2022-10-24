@@ -13,7 +13,6 @@
 //#define I2C
 #define I2C_RX_BUFFER_SIZE 5
 #define COUNTER_VALUE 2048      // 2048 0.5s ~ 1 Hz //32 768
-char txt[] = "ahoj";
 
 void initClockTo16MHz(void);
 
@@ -24,8 +23,8 @@ bool run;
 
 // I2C
 uint8_t RX_buffer[I2C_RX_BUFFER_SIZE] = {0};
-uint8_t RXByteCtr = 0;
-uint8_t ReceiveIndex = 0;
+volatile uint8_t SPI_state = 0;
+volatile uint16_t x_accel_t, y_accel_t, z_accel_t;
 /*
 uint8_t TransmitBuffer[MAX_BUFFER_SIZE] = {0};
 uint8_t TXByteCtr = 0;
@@ -40,8 +39,7 @@ int main(void)
 	uint8_t duty_cycle = 50;    //initialize of duty_cycle
 	volatile uint8_t SPIData;
 	volatile uint8_t sens_id, status, temp;
-	volatile uint16_t x_accel, y_accel, z_accel;
-	volatile int x_pos;
+	volatile int x_pos, x_accel, y_accel, z_accel;
 	volatile uint8_t integr_samples;
 
     #ifdef SPI
@@ -102,18 +100,21 @@ int main(void)
 	        if(sens_id == 0xD7)
 	            run = false;
 
-
-	        x_accel = SPI_read_byte(OUT_X_L | L3GD20H_READ);
-	        x_accel += SPI_read_byte(OUT_X_H | L3GD20H_READ) << 8;
-	        //y_accel = SPI_read_byte(OUT_Y_L | L3GD20H_READ);
-	        //y_accel += SPI_read_byte(OUT_Y_H | L3GD20H_READ) << 8;
-	        //z_accel = SPI_read_byte(OUT_Z_L | L3GD20H_READ);
-	        //z_accel += SPI_read_byte(OUT_Z_H | L3GD20H_READ) << 8;
+	        //SPI_write_byte(0x20, 0x0F);
+	        //x_accel_t = SPI_read_byte(OUT_X_L | L3GD20H_READ);
+	        //x_accel_t += SPI_read_byte(OUT_X_H | L3GD20H_READ) << 8;
+	        //y_accel_t = SPI_read_byte(OUT_Y_L | L3GD20H_READ);
+	        //y_accel_t += SPI_read_byte(OUT_Y_H | L3GD20H_READ) << 8;
+	        z_accel_t = SPI_read_byte(OUT_Z_L | L3GD20H_READ);
+	        z_accel_t += SPI_read_byte(OUT_Z_H | L3GD20H_READ) << 8;
 	        if(integr_samples > 100){
 	            x_pos = 0;
 	            integr_samples = 0;
 	        }
-	        x_pos += (int)x_accel;
+	        x_accel = (int)x_accel_t;
+	        y_accel = (int)y_accel_t;
+	        z_accel = (int)z_accel_t;
+	        x_pos += x_accel;
 	        /*if((x_accel & 0x8000) == 0)
 	            x_pos = x_accel;
 	        else
@@ -123,23 +124,28 @@ int main(void)
 	          //  x_pos = 100000;
 	        //if(x_pos < -100000)
 	          //  x_pos = -100000;
-	        if(x_pos > 0){
+	        if(z_accel > 5000){
 	            LED_FL_ON();
 	            LED_FR_OFF();
-	        }else{
+	            LED_RL_ON();
+	            LED_RR_ON();
+	            duty_cycle = 45;
+	        }else if(z_accel < -5000){
 	            LED_FR_ON();
 	            LED_FL_OFF();
+	            LED_RL_ON();
+	            LED_RR_ON();
+	            duty_cycle = 45;
+	        }else{
+	            LED_FR_OFF();
+	            LED_FL_OFF();
+	            LED_RL_OFF();
+	            LED_RR_OFF();
+	            duty_cycle = 55;
 	        }
-
-	        //SPIData = SPI_read_byte(CTRL1 | L3GD20H_READ);
-	        temp = SPI_read_byte(OUT_TEMP | L3GD20H_READ);
-	        //real_temp = temp & 0b01111111 * ((temp & 0b10000000)?(-1):(1)) + 127;
-	        //real_temp = 125 * (-temp + 127)/256 - 40;
+	        //temp = SPI_read_byte(OUT_TEMP | L3GD20H_READ);
 	        real_temp = (int)temp;
 	        //__delay_cycles(3200000);
-	        //x_accel = SPI_read_byte(0x80 | 0x28);
-	        //SPIData = 0;
-
 	#endif
 
     #ifdef I2C  // i2c init
@@ -169,13 +175,16 @@ int main(void)
 void __attribute__ ((interrupt(TIMER1_A0_VECTOR))) Timer_A(){
     //LED_FL_TOGGLE();
     //LED_FR_TOGGLE();
-    LED_RL_TOGGLE();
-    LED_RR_TOGGLE();
+    //LED_RL_TOGGLE();
+    //LED_RR_TOGGLE();
     run = true;
     /*if(slowdown)
         duty_cycle -=2;
     else
         duty_cycle += 2;*/
+    //P3OUT &= ~0x01;
+    //UCB0TXBUF = (L3GD20H_READ + 0x40 + OUT_X_L);
+
     TA1CTL |= TACLR;
 }
 
@@ -217,40 +226,59 @@ void initClockTo16MHz()
     }while (SFRIFG1&OFIFG);                         // Test oscillator fault flag
 }
 
-/*
+/*#pragma vector = USCI_UCTXIFG
+__interrupt void USCI_B0_ISR1(void)
+    {
+    UCB0TXBUF = 0xFF;
+    }*/
 #pragma vector = USCI_B0_VECTOR
 __interrupt void USCI_B0_ISR(void)
 {
-  uint8_t rx_val = 0;
-
-  switch(__even_in_range(UCB0IV,12))
-  {
-  case  0: break;                           // Vector  0: No interrupts
-  case  2: break;                           // Vector  2: ALIFG
-  case  4: break;                           // Vector  4: NACKIFG
-  case  6: break;                           // Vector  6: STTIFG
-  case  8: break;                           // Vector  8: STPIFG
-  case USCI_I2C_UCRXIFG:
-        rx_val = UCB0RXBUF;
-        if (RXByteCtr)
-        {
-          RX_buffer[ReceiveIndex++] = rx_val;
-          RXByteCtr--;
-        }
-
-        if (RXByteCtr == 1)
-        {
-          UCB0CTL1 |= UCTXSTP;
-        }
-        else if (RXByteCtr == 0)
-        {
+    switch(SPI_state)
+      {
+      case 0:
+          SPI_state++;
+          UCB0TXBUF = 0xFF;
+      case 1:
+      {
+          SPI_state++;
+          UCB0TXBUF = 0xFF;
+          x_accel_t = UCB0RXBUF;
+      }
+      case 2:
+      {
+          SPI_state++;
+          UCB0TXBUF = 0xFF;
+          x_accel_t += UCB0RXBUF << 8;
+      }
+      case 3:
+      {
+          SPI_state++;
+          UCB0TXBUF = 0xFF;
+          y_accel_t = UCB0RXBUF;
+      }
+      case 4:
+      {
+          SPI_state++;
+          UCB0TXBUF = 0xFF;
+          y_accel_t += UCB0RXBUF << 8;
+      }
+      case 5:
+      {
+          SPI_state++;
+          UCB0TXBUF = 0xFF;
+          z_accel_t = UCB0RXBUF;
+      }
+      case 6:
+      {
+          SPI_state = 0;
+          z_accel_t += UCB0RXBUF << 8;
+          P3OUT |= 0x01;
           UCB0IE &= ~UCRXIE;
-        }
-        break;                      // Interrupt Vector: I2C Mode: UCRXIFG
-  case 12: break;                           // Vector 12: TXIFG
-  default: break;
-  }
-}*/
+      }
+      default: break;
+      }
+}
 
 
 #pragma vector=ADC12_VECTOR

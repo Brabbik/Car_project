@@ -34,6 +34,7 @@ void SPI_init(void)
     UCB0CTL1 |= UCSSEL_2;         // SMCLK clock source
     UCB0BRW = 0x0004;             // divide /4 16MHz / 4 = 4 MHz
     UCB0IE |= UCRXIE + UCTXIE;
+    //UCB0IFG &= ~(UCTXIFG + UCRXIFG);
     UCB0CTL1 &= ~UCSWRST;         // Release state machine from reset state
 }
 /*
@@ -44,17 +45,19 @@ void SPI_init(void)
 uint8_t SPI_read_byte(uint8_t addr)
 {
     uint8_t data;
+    uint8_t timeout = 40;
     P3OUT &= ~0x01;                 // CS to LOW
-    while(!(UCB0IFG & UCTXIFG));
+    while(!(UCB0IFG & UCTXIFG) && timeout)
+        timeout--;
     UCB0TXBUF = addr;               // Transmit first character - address to be read
-    SPI_delay();
-    while(!(UCB0IFG & UCTXIFG));
-    UCB0TXBUF = addr;               // Transmit second character - dummy byte
-    //data = UCB0RXBUF;
-    SPI_delay();
-    SPI_delay();
-    while((UCB0STAT & UCBUSY));
-
+    timeout = 40;
+    while(!(UCB0IFG & UCTXIFG) && timeout)
+        timeout--;
+    UCB0TXBUF = 0x00;               // Transmit second character - dummy byte
+    //SPI_delay();
+    timeout = 40;
+    while((UCB0STAT & UCBUSY) && timeout)
+        timeout--;
     data = UCB0RXBUF;
     P3OUT |= 0x01;                  // CS to HIGH
     return data;
@@ -68,16 +71,18 @@ uint8_t SPI_read_byte(uint8_t addr)
  */
 void SPI_write_byte(uint8_t addr, uint8_t data)
 {
+    uint8_t timeout = 40;
     P3OUT &= ~0x01;                 // CS to LOW
-    SPI_delay();
-    while(!(UCB0IFG & UCTXIFG));
+    while(!(UCB0IFG & UCTXIFG) && timeout)
+        timeout--;
     UCB0TXBUF = addr;               // Transmit first character - address to be read
-    SPI_delay();
-    while(!(UCB0IFG & UCTXIFG));
+    timeout = 40;
+    while(!(UCB0IFG & UCTXIFG) && timeout)
+        timeout--;
     UCB0TXBUF = data;               // Transmit second character - data byte
-    while((UCB0STAT & UCBUSY));
-    SPI_delay();
-    SPI_delay();
+    timeout = 40;
+    while((UCB0STAT & UCBUSY) && timeout)
+        timeout--;
     P3OUT |= 0x01;                  // CS to HIGH
 }
 
