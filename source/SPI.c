@@ -57,7 +57,6 @@ uint8_t SPI_read_byte(uint8_t addr)
     while(!(UCB0IFG & UCTXIFG) && timeout)
         timeout--;
     UCB0TXBUF = 0x00;               // Transmit second character - dummy byte
-    //SPI_delay();
     timeout = 40;
     while((UCB0STAT & UCBUSY) && timeout)
         timeout--;
@@ -90,10 +89,4 @@ void SPI_write_byte(uint8_t addr, uint8_t data)
         timeout--;
     P3OUT |= 0x01;                  // CS to HIGH
     UCB0IE |= UCTXIE;
-}
-
-void SPI_delay(void)
-{
-    uint8_t i;
-    for (i = 0; i <100 ; i++);
 }

@@ -12,10 +12,12 @@
 #define SPI
 //#define I2C
 #define I2C_RX_BUFFER_SIZE 5
-#define COUNTER_VALUE 2048      // 2048 0.5s ~ 1 Hz //32 768
+#define BLINK_PERIOD 2048      // 2048 0.5s ~ 1 Hz //32 768
 #define GYRO_PERIOD 328       // 32 768 Hz, divider /1 ~ 100.2 Hz
 
 void initClockTo16MHz(void);
+void timer_B0_init(int period);
+void timer_A1_init(int period);
 
 uint16_t results[5];
 uint16_t index;
@@ -37,7 +39,7 @@ uint8_t TransmitIndex = 0;
 int main(void)
 {
 	WDTCTL = WDTPW | WDTHOLD;	//stop watchdog timer
-	uint8_t duty_cycle = 50;    //initialize of duty_cycle
+	volatile uint8_t duty_cycle = 50;    //initialize of duty_cycle
 	volatile uint8_t SPIData;
 	volatile uint8_t sens_id, status, temp;
 	volatile int x_pos, x_accel, y_accel, z_accel;
@@ -45,39 +47,20 @@ int main(void)
 
     #ifdef SPI
         SPI_init();
-
         SPI_write_byte(0x20, 0x0F);
-        //SPI_write_byte(0x20, 0x0F);
         //sens_id = SPI_read_byte(WHO_AM_I | L3GD20H_READ);
-        //__delay_cycles(160000);
-        //sens_id = SPI_read_byte(CTRL1 | L3GD20H_READ);
-        //SPI_write_byte(CTRL2 | L3GD20H_WRITE, 0x80);
-        //__delay_cycles(160000);
-
         //status = SPI_read_byte(STATUS | L3GD20H_READ);
-
     #endif
 
 	initClockTo16MHz();
-	LED_init();                 //initialize of LEDs
-	M_init();                   //initialize of H bridge and PWM
-	SerialInit();
-
-	TB0CCTL0 = CCIE;            // timer 0 interrupt enable LED
-	TB0CCR0 = COUNTER_VALUE;
-	TB0CTL = TASSEL__ACLK + MC__UP + ID__8;
-	TB0CTL |= TBIE;
-
-    TA1CCTL0 = CCIE;            //timer A1 interrupt enable GYRO start measure
-    TA1CCR0 = GYRO_PERIOD;      //timer A1 freq 100 Hz
-    TA1CTL = TASSEL__ACLK + MC__UP + ID__1;
-    TA1CTL |= TAIE;
-
+	LED_init();                 // initialize of LEDs
+	M_init();                   // initialize of H bridge and PWM
+	//SerialInit();
+	timer_B0_init(BLINK_PERIOD);    // timer B0 init
+	timer_A1_init(GYRO_PERIOD);     // timer A1 init
     _BIS_SR(GIE);
-
-
-	P1DIR |= 0x04;
-	ADC12CTL0 |= ADC12SC;                   // Start convn - software trigger
+	//P1DIR |= 0x04;
+	//ADC12CTL0 |= ADC12SC;                   // Start convn - software trigger
 
 /******************************************************************/
 /************************** main loop *****************************/
@@ -92,21 +75,13 @@ int main(void)
 	        //SerialWrite();
 
 	#ifdef SPI
-
-	        //SPI_write_byte(0x21, 0xA7);
 	        //SPI_write_byte(CTRL1 | L3GD20H_WRITE, 0x0F);
 	        //sens_id = SPI_read_byte(WHO_AM_I | L3GD20H_READ);
 	        //status = SPI_read_byte(STATUS | L3GD20H_READ);
-	        if(sens_id == 0xD7)
-	            run = false;
-
-	        //SPI_write_byte(0x20, 0x0F);
-	        //x_accel_t = SPI_read_byte(OUT_X_L | L3GD20H_READ);
-	        //x_accel_t += SPI_read_byte(OUT_X_H | L3GD20H_READ) << 8;
-	        //y_accel_t = SPI_read_byte(OUT_Y_L | L3GD20H_READ);
-	        //y_accel_t += SPI_read_byte(OUT_Y_H | L3GD20H_READ) << 8;
-	        //z_accel_t = SPI_read_byte(OUT_Z_L | L3GD20H_READ);
-	        //z_accel_t += SPI_read_byte(OUT_Z_H | L3GD20H_READ) << 8;
+	        //x_accel_t = SPI_read_byte(OUT_X_L | L3GD20H_READ);    x_accel_t += SPI_read_byte(OUT_X_H | L3GD20H_READ) << 8;
+	        //y_accel_t = SPI_read_byte(OUT_Y_L | L3GD20H_READ);    y_accel_t += SPI_read_byte(OUT_Y_H | L3GD20H_READ) << 8;
+	        //z_accel_t = SPI_read_byte(OUT_Z_L | L3GD20H_READ);    z_accel_t += SPI_read_byte(OUT_Z_H | L3GD20H_READ) << 8;
+	#endif
 	        if(integr_samples > 100){
 	            x_pos = 0;
 	            integr_samples = 0;
@@ -140,7 +115,7 @@ int main(void)
 	        //temp = SPI_read_byte(OUT_TEMP | L3GD20H_READ);
 	        real_temp = (int)temp;
 	        //__delay_cycles(3200000);
-	#endif
+
 
     #ifdef I2C  // i2c init
 	    I2C_init(0x20>>1);
@@ -166,20 +141,16 @@ int main(void)
         }       // end of main loop
 	}           // end of main function
 
-void __attribute__ ((interrupt(TIMER1_A0_VECTOR))) Timer_A(){
-    run = true;
-    /*if(slowdown)
-        duty_cycle -=2;
-    else
-        duty_cycle += 2;*/
-
+// ############ ISRs ############## //
+#pragma vector = TIMER1_A0_VECTOR
+__interrupt void ISR_TA1_GYRO(void){
     SPI_state = 0;
     UCB0IE |= UCTXIE;
     P3OUT &= ~0x01;
     UCB0TXBUF = (L3GD20H_READ + 0x40 + OUT_X_L);
-
     TA1CTL |= TACLR;
 }
+
 #pragma vector = TIMER0_B0_VECTOR   //isr for period
 __interrupt void ISR_TB0_CCR0(void){
     LED_FL_TOGGLE();
@@ -189,18 +160,51 @@ __interrupt void ISR_TB0_CCR0(void){
     TB0CTL |= TBCLR;    //clear flag CCR0
 }
 
-/*#pragma vector = TIMER0_B0_VECTOR   //isr for period
-__interrupt void ISR_TB0_CCR0(void){
-    run = true;
-    TB0CCTL0 &= ~CCIFG;    //clear flag CCR0
-}*/
-/*
-#pragma vector = TIMER0_A1_VECTOR       // isr flag duty cycle
-__interrupt void ISR_TA0_CCR1(void){
-    //M_STOP();
-    TA0CCTL2 &= ~CCIFG;    //clear flag CCR1
-}*/
+#pragma vector = USCI_B0_VECTOR
+__interrupt void ISR_GYRO_MEASURE(void){
+    UCB0IFG &= ~UCTXIFG;
+    UCB0IE &= ~UCTXIE;
+    switch(SPI_state){
+      case 0:
+          UCB0TXBUF = 0xFF;
+          SPI_state++;
+          break;
+      case 1:
+          UCB0TXBUF = 0xFF;
+          x_accel_t = UCB0RXBUF;
+          SPI_state++;
+          break;
+      case 2:
+          UCB0TXBUF = 0xFF;
+          x_accel_t += UCB0RXBUF << 8;
+          SPI_state++;
+          break;
+      case 3:
+          UCB0TXBUF = 0xFF;
+          y_accel_t = UCB0RXBUF;
+          SPI_state++;
+          break;
+      case 4:
+          UCB0TXBUF = 0xFF;
+          y_accel_t += UCB0RXBUF << 8;
+          SPI_state++;
+          break;
+      case 5:
+          UCB0TXBUF = 0xFF;
+          z_accel_t = UCB0RXBUF;
+          SPI_state++;
+          break;
+      case 6:
+          z_accel_t += UCB0RXBUF << 8;
+          P3OUT |= 0x01;
+          SPI_state = 0;
+          break;
+      default: break;
+    }
+    UCB0IE |= UCTXIE;
+}
 
+// ######## functions ########### //
 void initClockTo16MHz()
 {
     UCSCTL3 |= SELREF_2;                      // Set DCO FLL reference = REFO
@@ -227,80 +231,19 @@ void initClockTo16MHz()
     }while (SFRIFG1&OFIFG);                         // Test oscillator fault flag
 }
 
-/*#pragma vector = USCI_UCTXIFG
-__interrupt void USCI_B0_ISR1(void)
-    {
-    UCB0TXBUF = 0xFF;
-    }*/
-#pragma vector = USCI_B0_VECTOR
-__interrupt void USCI_B0_ISR(void)
-{
-    UCB0IFG &= ~UCTXIFG;
-    UCB0IE &= ~UCTXIE;
-    //UCB0TXBUF = 0xFF;
-    switch(SPI_state)
-      {
-      case 0:
-          UCB0TXBUF = 0xFF;
-          SPI_state++;
-          break;
-      case 1:
-      {
-          UCB0TXBUF = 0xFF;
-          x_accel_t = UCB0RXBUF;
-          SPI_state++;
-          //UCB0IE |= UCTXIE;
-          break;
-      }
-      case 2:
-      {
-          UCB0TXBUF = 0xFF;
-          x_accel_t += UCB0RXBUF << 8;
-          //UCB0IFG &= ~UCTXIFG;
-          SPI_state++;
-          break;
-      }
-      case 3:
-      {
-          UCB0TXBUF = 0xFF;
-          y_accel_t = UCB0RXBUF;
-          //UCB0IFG &= ~UCTXIFG;
-          SPI_state++;
-          break;
-      }
-      case 4:
-      {
-          UCB0TXBUF = 0xFF;
-          y_accel_t += UCB0RXBUF << 8;
-          //UCB0IFG &= ~UCTXIFG;
-          SPI_state++;
-          break;
-      }
-      case 5:
-      {
-          UCB0TXBUF = 0xFF;
-          z_accel_t = UCB0RXBUF;
-          //UCB0IFG &= ~UCTXIFG;
-          SPI_state++;
-          break;
-      }
-      case 6:
-      {
-          //UCB0TXBUF = 0xFF;
-          z_accel_t += UCB0RXBUF << 8;
-          P3OUT |= 0x01;
-          //UCB0IFG &= ~UCTXIFG;
-          //UCB0IE &= ~UCTXIE;
-          SPI_state = 0;
-          break;
-      }
-      default: break;
-      }
-    UCB0IE |= UCTXIE;
+void timer_B0_init(int period){
+    TB0CCTL0 = CCIE;            // timer 0 interrupt enable LED
+    TB0CCR0 = period;           // set timer period 500 ms
+    TB0CTL = TASSEL__ACLK + MC__UP + ID__8 + TBIE;
+}
+void timer_A1_init(int period){
+    TA1CCTL0 = CCIE;            // timer for GYRO start measure period
+    TA1CCR0 = period;           // set timer period 10 ms ~ freq 100 Hz
+    TA1CTL = TASSEL__ACLK + MC__UP + ID__1 + TAIE;
 }
 
 
-#pragma vector=ADC12_VECTOR
+/*#pragma vector=ADC12_VECTOR
 __interrupt void ADC12ISR (void)
 {
   switch(__even_in_range(ADC12IV,34))
@@ -334,4 +277,4 @@ __interrupt void ADC12ISR (void)
   case 34: break;                           // Vector 34:  ADC12IFG14
   default: break;
   }
-}
+}*/
