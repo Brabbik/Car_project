@@ -33,9 +33,11 @@ void SPI_init(void)
     UCB0CTL0 |= UCCKPL;           // inactive polarity of clock is high
     UCB0CTL1 |= UCSSEL_2;         // SMCLK clock source
     UCB0BRW = 0x0004;             // divide /4 16MHz / 4 = 4 MHz
-    UCB0IE |= UCRXIE + UCTXIE;
-    //UCB0IFG &= ~(UCTXIFG + UCRXIFG);
+    //UCB0IE |= UCTXIE;// + UCTXIE;    // turn on rx and tx interrupt
+
     UCB0CTL1 &= ~UCSWRST;         // Release state machine from reset state
+    UCB0IE |= UCTXIE;// + UCTXIE;    // turn on rx and tx interrupt
+    UCB0IFG &= ~(UCTXIFG + UCRXIFG);    //clear rx tx interrupt flags
 }
 /*
  *  SPI_read_byte - reads byte at the address specified by addr parameter
@@ -46,6 +48,7 @@ uint8_t SPI_read_byte(uint8_t addr)
 {
     uint8_t data;
     uint8_t timeout = 40;
+    UCB0IE &= ~UCTXIE;
     P3OUT &= ~0x01;                 // CS to LOW
     while(!(UCB0IFG & UCTXIFG) && timeout)
         timeout--;
@@ -60,6 +63,7 @@ uint8_t SPI_read_byte(uint8_t addr)
         timeout--;
     data = UCB0RXBUF;
     P3OUT |= 0x01;                  // CS to HIGH
+    UCB0IE |= UCTXIE;// + UCTXIE;
     return data;
 }
 
@@ -72,6 +76,7 @@ uint8_t SPI_read_byte(uint8_t addr)
 void SPI_write_byte(uint8_t addr, uint8_t data)
 {
     uint8_t timeout = 40;
+    UCB0IE &= ~UCTXIE;
     P3OUT &= ~0x01;                 // CS to LOW
     while(!(UCB0IFG & UCTXIFG) && timeout)
         timeout--;
@@ -84,6 +89,7 @@ void SPI_write_byte(uint8_t addr, uint8_t data)
     while((UCB0STAT & UCBUSY) && timeout)
         timeout--;
     P3OUT |= 0x01;                  // CS to HIGH
+    UCB0IE |= UCTXIE;
 }
 
 void SPI_delay(void)

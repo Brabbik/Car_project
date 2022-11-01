@@ -13,6 +13,7 @@
 //#define I2C
 #define I2C_RX_BUFFER_SIZE 5
 #define COUNTER_VALUE 2048      // 2048 0.5s ~ 1 Hz //32 768
+#define GYRO_PERIOD 328       // 32 768 Hz, divider /1 ~ 100.2 Hz
 
 void initClockTo16MHz(void);
 
@@ -53,8 +54,6 @@ int main(void)
         //SPI_write_byte(CTRL2 | L3GD20H_WRITE, 0x80);
         //__delay_cycles(160000);
 
-
-
         //status = SPI_read_byte(STATUS | L3GD20H_READ);
 
     #endif
@@ -64,15 +63,16 @@ int main(void)
 	M_init();                   //initialize of H bridge and PWM
 	SerialInit();
 
-    TA1CCTL0 = CCIE;            //timer A1 capture/compare interrupt enable
-    TA1CCR0 = COUNTER_VALUE;    //timer A1 freq 1 Hz
-    TA1CTL = TASSEL__ACLK + MC__UP + ID__8;
+	TB0CCTL0 = CCIE;            // timer 0 interrupt enable LED
+	TB0CCR0 = COUNTER_VALUE;
+	TB0CTL = TASSEL__ACLK + MC__UP + ID__8;
+	TB0CTL |= TBIE;
+
+    TA1CCTL0 = CCIE;            //timer A1 interrupt enable GYRO start measure
+    TA1CCR0 = GYRO_PERIOD;      //timer A1 freq 100 Hz
+    TA1CTL = TASSEL__ACLK + MC__UP + ID__1;
     TA1CTL |= TAIE;
 
-    //TB0CCTL0 = CCIE;            //timer A1 capture/compare interrupt enable
-    //TB0CCR0 = 1600;    //timer A1 freq 1 Hz
-    //TB0CTL = TASSEL__SMCLK + MC__UP + ID__1;
-    //TB0CTL |= TAIE;
     _BIS_SR(GIE);
 
 
@@ -105,8 +105,8 @@ int main(void)
 	        //x_accel_t += SPI_read_byte(OUT_X_H | L3GD20H_READ) << 8;
 	        //y_accel_t = SPI_read_byte(OUT_Y_L | L3GD20H_READ);
 	        //y_accel_t += SPI_read_byte(OUT_Y_H | L3GD20H_READ) << 8;
-	        z_accel_t = SPI_read_byte(OUT_Z_L | L3GD20H_READ);
-	        z_accel_t += SPI_read_byte(OUT_Z_H | L3GD20H_READ) << 8;
+	        //z_accel_t = SPI_read_byte(OUT_Z_L | L3GD20H_READ);
+	        //z_accel_t += SPI_read_byte(OUT_Z_H | L3GD20H_READ) << 8;
 	        if(integr_samples > 100){
 	            x_pos = 0;
 	            integr_samples = 0;
@@ -115,16 +115,10 @@ int main(void)
 	        y_accel = (int)y_accel_t;
 	        z_accel = (int)z_accel_t;
 	        x_pos += x_accel;
-	        /*if((x_accel & 0x8000) == 0)
-	            x_pos = x_accel;
-	        else
-	            x_pos = -(~x_accel + 1);*/
+
 	        integr_samples++;
-	        //if(x_pos > 100000)
-	          //  x_pos = 100000;
-	        //if(x_pos < -100000)
-	          //  x_pos = -100000;
-	        if(z_accel > 5000){
+
+	        /*if(z_accel > 5000){
 	            LED_FL_ON();
 	            LED_FR_OFF();
 	            LED_RL_ON();
@@ -142,7 +136,7 @@ int main(void)
 	            LED_RL_OFF();
 	            LED_RR_OFF();
 	            duty_cycle = 55;
-	        }
+	        }*/
 	        //temp = SPI_read_byte(OUT_TEMP | L3GD20H_READ);
 	        real_temp = (int)temp;
 	        //__delay_cycles(3200000);
@@ -173,26 +167,33 @@ int main(void)
 	}           // end of main function
 
 void __attribute__ ((interrupt(TIMER1_A0_VECTOR))) Timer_A(){
-    //LED_FL_TOGGLE();
-    //LED_FR_TOGGLE();
-    //LED_RL_TOGGLE();
-    //LED_RR_TOGGLE();
     run = true;
     /*if(slowdown)
         duty_cycle -=2;
     else
         duty_cycle += 2;*/
-    //P3OUT &= ~0x01;
-    //UCB0TXBUF = (L3GD20H_READ + 0x40 + OUT_X_L);
+
+    SPI_state = 0;
+    UCB0IE |= UCTXIE;
+    P3OUT &= ~0x01;
+    UCB0TXBUF = (L3GD20H_READ + 0x40 + OUT_X_L);
 
     TA1CTL |= TACLR;
 }
+#pragma vector = TIMER0_B0_VECTOR   //isr for period
+__interrupt void ISR_TB0_CCR0(void){
+    LED_FL_TOGGLE();
+    LED_FR_TOGGLE();
+    LED_RL_TOGGLE();
+    LED_RR_TOGGLE();
+    TB0CTL |= TBCLR;    //clear flag CCR0
+}
 
-#pragma vector = TIMER0_B0_VECTOR     //isr for period
+/*#pragma vector = TIMER0_B0_VECTOR   //isr for period
 __interrupt void ISR_TB0_CCR0(void){
     run = true;
     TB0CCTL0 &= ~CCIFG;    //clear flag CCR0
-}
+}*/
 /*
 #pragma vector = TIMER0_A1_VECTOR       // isr flag duty cycle
 __interrupt void ISR_TA0_CCR1(void){
@@ -234,50 +235,68 @@ __interrupt void USCI_B0_ISR1(void)
 #pragma vector = USCI_B0_VECTOR
 __interrupt void USCI_B0_ISR(void)
 {
+    UCB0IFG &= ~UCTXIFG;
+    UCB0IE &= ~UCTXIE;
+    //UCB0TXBUF = 0xFF;
     switch(SPI_state)
       {
       case 0:
-          SPI_state++;
           UCB0TXBUF = 0xFF;
+          SPI_state++;
+          break;
       case 1:
       {
-          SPI_state++;
           UCB0TXBUF = 0xFF;
           x_accel_t = UCB0RXBUF;
+          SPI_state++;
+          //UCB0IE |= UCTXIE;
+          break;
       }
       case 2:
       {
-          SPI_state++;
           UCB0TXBUF = 0xFF;
           x_accel_t += UCB0RXBUF << 8;
+          //UCB0IFG &= ~UCTXIFG;
+          SPI_state++;
+          break;
       }
       case 3:
       {
-          SPI_state++;
           UCB0TXBUF = 0xFF;
           y_accel_t = UCB0RXBUF;
+          //UCB0IFG &= ~UCTXIFG;
+          SPI_state++;
+          break;
       }
       case 4:
       {
-          SPI_state++;
           UCB0TXBUF = 0xFF;
           y_accel_t += UCB0RXBUF << 8;
+          //UCB0IFG &= ~UCTXIFG;
+          SPI_state++;
+          break;
       }
       case 5:
       {
-          SPI_state++;
           UCB0TXBUF = 0xFF;
           z_accel_t = UCB0RXBUF;
+          //UCB0IFG &= ~UCTXIFG;
+          SPI_state++;
+          break;
       }
       case 6:
       {
-          SPI_state = 0;
+          //UCB0TXBUF = 0xFF;
           z_accel_t += UCB0RXBUF << 8;
           P3OUT |= 0x01;
-          UCB0IE &= ~UCRXIE;
+          //UCB0IFG &= ~UCTXIFG;
+          //UCB0IE &= ~UCTXIE;
+          SPI_state = 0;
+          break;
       }
       default: break;
       }
+    UCB0IE |= UCTXIE;
 }
 
 
