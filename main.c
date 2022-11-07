@@ -14,6 +14,8 @@
 #define I2C_RX_BUFFER_SIZE 5
 #define BLINK_PERIOD 2048      // 2048 0.5s ~ 1 Hz //32 768
 #define GYRO_PERIOD 328       // 32 768 Hz, divider /1 ~ 100.2 Hz
+#define AVERAGING 4
+#define N 100
 
 void initClockTo16MHz(void);
 void timer_B0_init(int period);
@@ -22,12 +24,21 @@ void timer_A1_init(int period);
 uint16_t results[5];
 uint16_t index;
 int real_temp = 0;
-bool run;
+//int x_speed_buf[AVERAGING];
+//int y_speed_buf[AVERAGING];
+int z_speed_buf[AVERAGING];
+int main_buffer[6000];         // buffer to 5 min
+unsigned int main_buffer_index = 0;
+long z_speed_avg = 0;
+long z_all_avg = 0;
+long r_xx = 0;
+int number_ring = 1;
+bool save_calc;
 
 // I2C
 uint8_t RX_buffer[I2C_RX_BUFFER_SIZE] = {0};
 volatile uint8_t SPI_state = 0;
-volatile uint16_t x_accel_t, y_accel_t, z_accel_t;
+volatile uint16_t x_speed_t, y_speed_t, z_speed_t;
 /*
 uint8_t TransmitBuffer[MAX_BUFFER_SIZE] = {0};
 uint8_t TXByteCtr = 0;
@@ -42,7 +53,7 @@ int main(void)
 	volatile uint8_t duty_cycle = 50;    //initialize of duty_cycle
 	volatile uint8_t SPIData;
 	volatile uint8_t sens_id, status, temp;
-	volatile int x_pos, x_accel, y_accel, z_accel;
+	volatile int x_pos, x_speed, y_speed, z_speed;
 	volatile uint8_t integr_samples;
 
     #ifdef SPI
@@ -56,7 +67,7 @@ int main(void)
 	LED_init();                 // initialize of LEDs
 	M_init();                   // initialize of H bridge and PWM
 	//SerialInit();
-	timer_B0_init(BLINK_PERIOD);    // timer B0 init
+	//timer_B0_init(BLINK_PERIOD);    // timer B0 init
 	timer_A1_init(GYRO_PERIOD);     // timer A1 init
     _BIS_SR(GIE);
 	//P1DIR |= 0x04;
@@ -66,7 +77,38 @@ int main(void)
 /************************** main loop *****************************/
 	    while(true)
 	    {
-	        run = false;
+	        duty_cycle = 50;
+	        if(save_calc){
+	        save_calc = false;
+	        main_buffer[main_buffer_index] = z_speed_avg;
+	        if(main_buffer_index > 0){
+	        z_all_avg = ((z_all_avg * main_buffer_index) + z_speed_avg)/(main_buffer_index + 1);
+	        }
+	        else
+	            z_all_avg = z_speed_avg;
+            main_buffer_index++;
+            if(main_buffer_index > N)
+            {
+                //LED_FL_ON();
+                //LED_FR_ON();
+                long i = 0;
+                long a,b = 0;
+                for(; i < N && i < main_buffer_index - number_ring * N; i++){
+                    a = (main_buffer[i]-z_all_avg)*(main_buffer[i+ number_ring * N]-z_all_avg);
+                    b = (main_buffer[i]-z_all_avg) * (main_buffer[i]-z_all_avg);
+                }
+            r_xx = (a * 10)/b;
+            }
+	        }
+	        if (r_xx > 10){
+	            number_ring++;
+	            LED_FL_TOGGLE();
+	            LED_FR_TOGGLE();
+	        }else{
+	            //LED_FL_OFF();
+	            //LED_FR_OFF();
+	        }
+
 	        /*if(duty_cycle >= 50)
 	            slowdown = true;
 	        if(duty_cycle <= 40)
@@ -78,39 +120,39 @@ int main(void)
 	        //SPI_write_byte(CTRL1 | L3GD20H_WRITE, 0x0F);
 	        //sens_id = SPI_read_byte(WHO_AM_I | L3GD20H_READ);
 	        //status = SPI_read_byte(STATUS | L3GD20H_READ);
-	        //x_accel_t = SPI_read_byte(OUT_X_L | L3GD20H_READ);    x_accel_t += SPI_read_byte(OUT_X_H | L3GD20H_READ) << 8;
-	        //y_accel_t = SPI_read_byte(OUT_Y_L | L3GD20H_READ);    y_accel_t += SPI_read_byte(OUT_Y_H | L3GD20H_READ) << 8;
-	        //z_accel_t = SPI_read_byte(OUT_Z_L | L3GD20H_READ);    z_accel_t += SPI_read_byte(OUT_Z_H | L3GD20H_READ) << 8;
+	        //x_speed_t = SPI_read_byte(OUT_X_L | L3GD20H_READ);    x_speed_t += SPI_read_byte(OUT_X_H | L3GD20H_READ) << 8;
+	        //y_speed_t = SPI_read_byte(OUT_Y_L | L3GD20H_READ);    y_speed_t += SPI_read_byte(OUT_Y_H | L3GD20H_READ) << 8;
+	        //z_speed_t = SPI_read_byte(OUT_Z_L | L3GD20H_READ);    z_speed_t += SPI_read_byte(OUT_Z_H | L3GD20H_READ) << 8;
 	#endif
 	        if(integr_samples > 100){
 	            x_pos = 0;
 	            integr_samples = 0;
 	        }
-	        x_accel = (int)x_accel_t;
-	        y_accel = (int)y_accel_t;
-	        z_accel = (int)z_accel_t;
-	        x_pos += x_accel;
+	        x_speed = (int)x_speed_t;
+	        y_speed = (int)y_speed_t;
+	        z_speed = (int)z_speed_t;
+	        x_pos += x_speed;
 
 	        integr_samples++;
 
-	        /*if(z_accel > 5000){
+	        /*if(z_speed > 5000){
 	            LED_FL_ON();
 	            LED_FR_OFF();
 	            LED_RL_ON();
 	            LED_RR_ON();
-	            duty_cycle = 45;
-	        }else if(z_accel < -5000){
+	            duty_cycle = 48;
+	        }else if(z_speed < -5000){
 	            LED_FR_ON();
 	            LED_FL_OFF();
 	            LED_RL_ON();
 	            LED_RR_ON();
-	            duty_cycle = 45;
+	            duty_cycle = 48;
 	        }else{
 	            LED_FR_OFF();
 	            LED_FL_OFF();
 	            LED_RL_OFF();
 	            LED_RR_OFF();
-	            duty_cycle = 55;
+	            duty_cycle = 65;
 	        }*/
 	        //temp = SPI_read_byte(OUT_TEMP | L3GD20H_READ);
 	        real_temp = (int)temp;
@@ -145,6 +187,12 @@ int main(void)
 #pragma vector = TIMER1_A0_VECTOR
 __interrupt void ISR_TA1_GYRO(void){
     SPI_state = 0;
+
+
+    if(index >= AVERAGING){
+        index = 0;
+        save_calc = true;
+    }
     UCB0IE |= UCTXIE;
     P3OUT &= ~0x01;
     UCB0TXBUF = (L3GD20H_READ + 0x40 + OUT_X_L);
@@ -171,33 +219,41 @@ __interrupt void ISR_GYRO_MEASURE(void){
           break;
       case 1:
           UCB0TXBUF = 0xFF;
-          x_accel_t = UCB0RXBUF;
+          x_speed_t = UCB0RXBUF;
           SPI_state++;
           break;
       case 2:
           UCB0TXBUF = 0xFF;
-          x_accel_t += UCB0RXBUF << 8;
+          x_speed_t += UCB0RXBUF << 8;
           SPI_state++;
           break;
       case 3:
           UCB0TXBUF = 0xFF;
-          y_accel_t = UCB0RXBUF;
+          y_speed_t = UCB0RXBUF;
           SPI_state++;
           break;
       case 4:
           UCB0TXBUF = 0xFF;
-          y_accel_t += UCB0RXBUF << 8;
+          y_speed_t += UCB0RXBUF << 8;
           SPI_state++;
           break;
       case 5:
           UCB0TXBUF = 0xFF;
-          z_accel_t = UCB0RXBUF;
+          z_speed_t = UCB0RXBUF;
           SPI_state++;
           break;
       case 6:
-          z_accel_t += UCB0RXBUF << 8;
+          z_speed_t += UCB0RXBUF << 8;
           P3OUT |= 0x01;
           SPI_state = 0;
+          z_speed_buf[index] = (int)z_speed_t;
+          index++;
+          unsigned i = AVERAGING;
+          z_speed_avg = 0;
+          for(;i > 0; i--){
+              z_speed_avg += z_speed_buf[AVERAGING - i];
+          }
+          z_speed_avg = z_speed_avg >> 2;
           break;
       default: break;
     }
