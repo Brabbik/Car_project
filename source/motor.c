@@ -8,7 +8,7 @@
 #include "include/motor.h"
 
 void M_init(void){
-    P8DIR = BIT2 + BIT3;        //pin 2 and pin 3 set output
+    P8DIR = BIT2 + BIT3 + BIT5;        //pin 2 and pin 3 set output
     P8SEL = BIT3;               //pin 3 is special function
     M_DIR_1();                  //set motor direction
 

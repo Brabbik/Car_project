@@ -12,14 +12,16 @@
 #define SPI
 //#define I2C
 #define I2C_RX_BUFFER_SIZE 5
-#define BLINK_PERIOD 2048      // 2048 0.5s ~ 1 Hz //32 768
+#define BLINK_PERIOD 1024 //2048      // 2048 0.5s ~ 1 Hz //32 768
 #define GYRO_PERIOD 328       // 32 768 Hz, divider /1 ~ 100.2 Hz
 #define AVERAGING 4
-#define N 100
+#define N_LAP 130
+#define GYRO_S 50       // 50 mm mezi vzorky
 
 void initClockTo16MHz(void);
 void timer_B0_init(int period);
 void timer_A1_init(int period);
+void timer_A1_change_period(int period);
 
 uint16_t results[5];
 uint16_t index;
@@ -27,13 +29,16 @@ int real_temp = 0;
 //int x_speed_buf[AVERAGING];
 //int y_speed_buf[AVERAGING];
 int z_speed_buf[AVERAGING];
-int main_buffer[6000];         // buffer to 5 min
-unsigned int main_buffer_index = 0;
-long z_speed_avg = 0;
-long z_all_avg = 0;
-long r_xx = 0;
+int main_buffer[3000] = {0};         // buffer to 5 min
+unsigned int main_buffer_index = 0;  // actual index of saved acc to main buffer
+unsigned int lap_long = 0;           // number of data in 1 lap
+unsigned int first_lap_index = 0;    // repeating indexes of data from 1 lap
+long long z_speed_avg = 0;
+long long z_all_avg = 0;
+long long r_xx = 0;
 int number_ring = 1;
 bool save_calc;
+bool scanning = true;
 
 // I2C
 uint8_t RX_buffer[I2C_RX_BUFFER_SIZE] = {0};
@@ -50,11 +55,11 @@ uint8_t TransmitIndex = 0;
 int main(void)
 {
 	WDTCTL = WDTPW | WDTHOLD;	//stop watchdog timer
-	volatile uint8_t duty_cycle = 50;    //initialize of duty_cycle
+	volatile uint8_t duty_cycle = 45;    //initialize of duty_cycle
 	volatile uint8_t SPIData;
 	volatile uint8_t sens_id, status, temp;
 	volatile int x_pos, x_speed, y_speed, z_speed;
-	volatile uint8_t integr_samples;
+	int breaking = 0;
 
     #ifdef SPI
         SPI_init();
@@ -67,7 +72,7 @@ int main(void)
 	LED_init();                 // initialize of LEDs
 	M_init();                   // initialize of H bridge and PWM
 	//SerialInit();
-	//timer_B0_init(BLINK_PERIOD);    // timer B0 init
+	timer_B0_init(BLINK_PERIOD);    // timer B0 init
 	timer_A1_init(GYRO_PERIOD);     // timer A1 init
     _BIS_SR(GIE);
 	//P1DIR |= 0x04;
@@ -77,33 +82,81 @@ int main(void)
 /************************** main loop *****************************/
 	    while(true)
 	    {
-	        duty_cycle = 50;
+	        //duty_cycle = 45;
 	        if(save_calc){
+	            //timer_A1_change_period((32768*GYRO_S)/(208*duty_cycle - 5058));
+	            //timer_A1_change_period((32768*GYRO_S)/(201*duty_cycle - 4932));   // change timer period by duty_cycle
 	        save_calc = false;
-	        main_buffer[main_buffer_index] = z_speed_avg;
+	        if(scanning){
+	            main_buffer[main_buffer_index] = z_speed_avg;
 	        if(main_buffer_index > 0){
 	        z_all_avg = ((z_all_avg * main_buffer_index) + z_speed_avg)/(main_buffer_index + 1);
 	        }
 	        else
 	            z_all_avg = z_speed_avg;
             main_buffer_index++;
-            if(main_buffer_index > N)
+	        }
+            first_lap_index++;
+            if (!scanning && first_lap_index > lap_long){
+                LED_FL_TOGGLE();
+                LED_FR_TOGGLE();
+                first_lap_index = 0;
+            }
+            if(main_buffer_index >= N_LAP)   // po projeti prvniho kola + neco navic
             {
-                //LED_FL_ON();
-                //LED_FR_ON();
-                long i = 0;
-                long a,b = 0;
-                for(; i < N && i < main_buffer_index - number_ring * N; i++){
-                    a = (main_buffer[i]-z_all_avg)*(main_buffer[i+ number_ring * N]-z_all_avg);
+                unsigned int i = 0; unsigned int n = N_LAP - 1;
+                long long a = 0;
+                long long b = 0;
+                long long r_tmp = 0;
+
+                if (!lap_long){
+                    for(; n > (N_LAP/2); n--){
+                        for(i = 0; i < N_LAP; i++){
+                            a = a + ((main_buffer[i]-z_all_avg) * (main_buffer[i + n]-z_all_avg));
+                            b = b + ((main_buffer[i]-z_all_avg) * (main_buffer[i]-z_all_avg));
+                        }
+                        r_tmp = ((100*a)/b);
+                        if(r_tmp > r_xx){
+                            r_xx = r_tmp;
+                            lap_long = n;
+                        }
+                    }
+                }
+                scanning = false;
+            }
+            //LED_FL_OFF();
+                //LED_FR_OFF();
+                if(-15 < main_buffer[first_lap_index + 5] && main_buffer[first_lap_index + 5] < 15){
+                 //duty_cycle = 65;
+                 LED_RL_OFF();
+                 LED_RR_OFF();
+                 breaking = 0;
+                }
+                else{
+                //duty_cycle = 45;
+                breaking++;
+                if(breaking > 100){
+                    //duty_cycle = 5;
+                    //LED_FL_ON();
+                    //LED_FR_ON();
+                }
+                LED_RL_ON();
+                LED_RR_ON();
+                }
+
+
+                /*for(; i < N_LAP && i < main_buffer_index - number_ring * N_LAP; i++){
+                    a = (main_buffer[i]-z_all_avg)*(main_buffer[i+ number_ring * N_LAP]-z_all_avg);
                     b = (main_buffer[i]-z_all_avg) * (main_buffer[i]-z_all_avg);
                 }
-            r_xx = (a * 10)/b;
-            }
+            r_xx = (a * 10)/b;*/
+
 	        }
+
 	        if (r_xx > 10){
 	            number_ring++;
-	            LED_FL_TOGGLE();
-	            LED_FR_TOGGLE();
+	            //LED_FL_TOGGLE();
+	            //LED_FR_TOGGLE();
 	        }else{
 	            //LED_FL_OFF();
 	            //LED_FR_OFF();
@@ -124,16 +177,9 @@ int main(void)
 	        //y_speed_t = SPI_read_byte(OUT_Y_L | L3GD20H_READ);    y_speed_t += SPI_read_byte(OUT_Y_H | L3GD20H_READ) << 8;
 	        //z_speed_t = SPI_read_byte(OUT_Z_L | L3GD20H_READ);    z_speed_t += SPI_read_byte(OUT_Z_H | L3GD20H_READ) << 8;
 	#endif
-	        if(integr_samples > 100){
-	            x_pos = 0;
-	            integr_samples = 0;
-	        }
-	        x_speed = (int)x_speed_t;
-	        y_speed = (int)y_speed_t;
+	        //x_speed = (int)x_speed_t;
+	        //y_speed = (int)y_speed_t;
 	        z_speed = (int)z_speed_t;
-	        x_pos += x_speed;
-
-	        integr_samples++;
 
 	        /*if(z_speed > 5000){
 	            LED_FL_ON();
@@ -187,8 +233,6 @@ int main(void)
 #pragma vector = TIMER1_A0_VECTOR
 __interrupt void ISR_TA1_GYRO(void){
     SPI_state = 0;
-
-
     if(index >= AVERAGING){
         index = 0;
         save_calc = true;
@@ -201,10 +245,13 @@ __interrupt void ISR_TA1_GYRO(void){
 
 #pragma vector = TIMER0_B0_VECTOR   //isr for period
 __interrupt void ISR_TB0_CCR0(void){
+    if(scanning)
+        {
     LED_FL_TOGGLE();
     LED_FR_TOGGLE();
-    LED_RL_TOGGLE();
-    LED_RR_TOGGLE();
+    //LED_RL_TOGGLE();
+    //LED_RR_TOGGLE();
+        }
     TB0CTL |= TBCLR;    //clear flag CCR0
 }
 
@@ -246,7 +293,7 @@ __interrupt void ISR_GYRO_MEASURE(void){
           z_speed_t += UCB0RXBUF << 8;
           P3OUT |= 0x01;
           SPI_state = 0;
-          z_speed_buf[index] = (int)z_speed_t;
+          z_speed_buf[index] = (int)z_speed_t >> 8;
           index++;
           unsigned i = AVERAGING;
           z_speed_avg = 0;
@@ -296,6 +343,9 @@ void timer_A1_init(int period){
     TA1CCTL0 = CCIE;            // timer for GYRO start measure period
     TA1CCR0 = period;           // set timer period 10 ms ~ freq 100 Hz
     TA1CTL = TASSEL__ACLK + MC__UP + ID__1 + TAIE;
+}
+void timer_A1_change_period(int period){
+    TA1CCR0 = period;
 }
 
 
