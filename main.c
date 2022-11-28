@@ -15,13 +15,14 @@
 #define BLINK_PERIOD 1024 //2048      // 2048 0.5s ~ 1 Hz //32 768
 #define GYRO_PERIOD 328       // 32 768 Hz, divider /1 ~ 100.2 Hz
 #define AVERAGING 4
-#define N_LAP 130
+#define N_LAP 60
 #define GYRO_S 50       // 50 mm mezi vzorky
 
 void initClockTo16MHz(void);
 void timer_B0_init(int period);
 void timer_A1_init(int period);
 void timer_A1_change_period(int period);
+int avg_calc(int act_index, int length);
 
 uint16_t results[5];
 uint16_t index;
@@ -29,6 +30,7 @@ int real_temp = 0;
 //int x_speed_buf[AVERAGING];
 //int y_speed_buf[AVERAGING];
 int z_speed_buf[AVERAGING];
+int index_delay = 0;
 int main_buffer[3000] = {0};         // buffer to 5 min
 unsigned int main_buffer_index = 0;  // actual index of saved acc to main buffer
 unsigned int lap_long = 0;           // number of data in 1 lap
@@ -36,7 +38,11 @@ unsigned int first_lap_index = 0;    // repeating indexes of data from 1 lap
 long long z_speed_avg = 0;
 long long z_all_avg = 0;
 long long r_xx = 0;
-int number_ring = 1;
+int number_lap = 0;
+int look_up[36] = {502,48,465,461,448,434,420,406,393,379,
+                   364,347,340,330,317,288,277,266,256,247,
+                   238,230,222,215,209,203,197,191,186,181,
+                   176,172,168,164,160,156};
 bool save_calc;
 bool scanning = true;
 
@@ -72,6 +78,8 @@ int main(void)
 	LED_init();                 // initialize of LEDs
 	M_init();                   // initialize of H bridge and PWM
 	//SerialInit();
+	LED_RL_ON();
+	LED_RR_ON();
 	timer_B0_init(BLINK_PERIOD);    // timer B0 init
 	timer_A1_init(GYRO_PERIOD);     // timer A1 init
     _BIS_SR(GIE);
@@ -82,12 +90,13 @@ int main(void)
 /************************** main loop *****************************/
 	    while(true)
 	    {
-	        //duty_cycle = 45;
+	        //duty_cycle = 50;
 	        if(save_calc){
+	            timer_A1_change_period(look_up[duty_cycle - 35]);
 	            //timer_A1_change_period((32768*GYRO_S)/(208*duty_cycle - 5058));
 	            //timer_A1_change_period((32768*GYRO_S)/(201*duty_cycle - 4932));   // change timer period by duty_cycle
 	        save_calc = false;
-	        if(scanning){
+
 	            main_buffer[main_buffer_index] = z_speed_avg;
 	        if(main_buffer_index > 0){
 	        z_all_avg = ((z_all_avg * main_buffer_index) + z_speed_avg)/(main_buffer_index + 1);
@@ -95,21 +104,21 @@ int main(void)
 	        else
 	            z_all_avg = z_speed_avg;
             main_buffer_index++;
-	        }
+            index_delay++;
             first_lap_index++;
-            if (!scanning && first_lap_index > lap_long){
-                LED_FL_TOGGLE();
-                LED_FR_TOGGLE();
-                first_lap_index = 0;
-            }
-            if(main_buffer_index >= N_LAP)   // po projeti prvniho kola + neco navic
+            if(main_buffer_index >= N_LAP)
             {
-                unsigned int i = 0; unsigned int n = N_LAP - 1;
+                LED_RL_OFF();
+                LED_RR_OFF();
+            }
+            if(main_buffer_index >= 2*N_LAP)   // po projeti useku zacneme korelovat
+            {
+                unsigned int i = 0; unsigned int n = main_buffer_index - N_LAP;
                 long long a = 0;
                 long long b = 0;
                 long long r_tmp = 0;
 
-                if (!lap_long){
+                /*if (!lap_long){
                     for(; n > (N_LAP/2); n--){
                         for(i = 0; i < N_LAP; i++){
                             a = a + ((main_buffer[i]-z_all_avg) * (main_buffer[i + n]-z_all_avg));
@@ -120,52 +129,56 @@ int main(void)
                             r_xx = r_tmp;
                             lap_long = n;
                         }
+                    }*/
+
+            for(i = 0; i < N_LAP; i++){
+                a = a + ((main_buffer[i]-z_all_avg) * (main_buffer[i + n]-z_all_avg));
+                b = b + ((main_buffer[i]-z_all_avg) * (main_buffer[i]-z_all_avg));
+                }
+            r_xx = ((100*a)/b);
+            if(r_xx > 100 && index_delay > 10){
+                index_delay = 0;
+                number_lap++;
+                first_lap_index = N_LAP;
+                scanning = false;
+                LED_FL_TOGGLE();
+                LED_FR_TOGGLE();
+                }
+
+
+            }
+            if(number_lap > 0){
+                if(-20 > avg_calc(first_lap_index,20) && avg_calc(first_lap_index,20) < 20){    // avg udelat v abs hodnote
+                    if(-25 < main_buffer[first_lap_index + 15] && main_buffer[first_lap_index + 15] < 25){
+                     duty_cycle = 65;
+                     LED_RL_OFF();
+                     LED_RR_OFF();
+                     breaking = 0;
+                    }
+                    else{
+                    duty_cycle = 35;
+                    LED_RL_ON();
+                    LED_RR_ON();
                     }
                 }
-                scanning = false;
-            }
-            //LED_FL_OFF();
-                //LED_FR_OFF();
-                if(-15 < main_buffer[first_lap_index + 5] && main_buffer[first_lap_index + 5] < 15){
-                 //duty_cycle = 65;
-                 LED_RL_OFF();
-                 LED_RR_OFF();
-                 breaking = 0;
-                }
                 else{
-                //duty_cycle = 45;
-                breaking++;
-                if(breaking > 100){
-                    //duty_cycle = 5;
-                    //LED_FL_ON();
-                    //LED_FR_ON();
-                }
-                LED_RL_ON();
-                LED_RR_ON();
+                    if(-25 < main_buffer[first_lap_index + 6] && main_buffer[first_lap_index + 6] < 25){
+                     duty_cycle = 65;
+                     LED_RL_OFF();
+                     LED_RR_OFF();
+                     breaking = 0;
+                    }
+                    else{
+                    duty_cycle = 40;
+                    LED_RL_ON();
+                    LED_RR_ON();
+                    }
                 }
 
-
-                /*for(; i < N_LAP && i < main_buffer_index - number_ring * N_LAP; i++){
-                    a = (main_buffer[i]-z_all_avg)*(main_buffer[i+ number_ring * N_LAP]-z_all_avg);
-                    b = (main_buffer[i]-z_all_avg) * (main_buffer[i]-z_all_avg);
-                }
-            r_xx = (a * 10)/b;*/
-
+            }
 	        }
 
-	        if (r_xx > 10){
-	            number_ring++;
-	            //LED_FL_TOGGLE();
-	            //LED_FR_TOGGLE();
-	        }else{
-	            //LED_FL_OFF();
-	            //LED_FR_OFF();
-	        }
 
-	        /*if(duty_cycle >= 50)
-	            slowdown = true;
-	        if(duty_cycle <= 40)
-	            slowdown = false;*/
 	        M_set_duty_cycle(duty_cycle);
 	        //SerialWrite();
 
@@ -346,6 +359,14 @@ void timer_A1_init(int period){
 }
 void timer_A1_change_period(int period){
     TA1CCR0 = period;
+}
+
+int avg_calc(int act_index, int length){
+    int tmp = 0;
+    int i = act_index - length;
+    for (; i < act_index; i++)
+        tmp += main_buffer[i];
+    return tmp/length;
 }
 
 
