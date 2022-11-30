@@ -3,7 +3,6 @@
 #include "include/I2C.h"
 #include "include/LED.h"
 #include "include/ADC.h"
-#include "include/Serial.h"
 #include "include/L3GD20H.h"
 #include "include/ADXL343.h"
 #include "include/motor.h"
@@ -14,15 +13,15 @@
 #define I2C_RX_BUFFER_SIZE 5
 #define BLINK_PERIOD 1024 //2048      // 2048 0.5s ~ 1 Hz //32 768
 #define GYRO_PERIOD 328       // 32 768 Hz, divider /1 ~ 100.2 Hz
-#define AVERAGING 4
-#define N_LAP 60
+#define AVERAGING 4     // 4
+#define N_LAP 60       // 60
 #define GYRO_S 50       // 50 mm mezi vzorky
 
 void initClockTo16MHz(void);
 void timer_B0_init(int period);
 void timer_A1_init(int period);
 void timer_A1_change_period(int period);
-int avg_calc(int act_index, int length);
+int avg_calc(unsigned int act_index, unsigned int length);
 
 uint16_t results[5];
 uint16_t index;
@@ -39,10 +38,10 @@ long long z_speed_avg = 0;
 long long z_all_avg = 0;
 long long r_xx = 0;
 int number_lap = 0;
-int look_up[36] = {502,48,465,461,448,434,420,406,393,379,
-                   364,347,340,330,317,288,277,266,256,247,
-                   238,230,222,215,209,203,197,191,186,181,
-                   176,172,168,164,160,156};
+int look_up[36] = {502,48,465,461,448,434,420,406,393,379,  //35
+                   364,347,340,330,317,288,277,266,256,247, //45
+                   238,230,222,215,209,203,197,191,186,181, //55
+                   176,172,168,164,160,156};                //65 - 70
 bool save_calc;
 bool scanning = true;
 
@@ -61,11 +60,11 @@ uint8_t TransmitIndex = 0;
 int main(void)
 {
 	WDTCTL = WDTPW | WDTHOLD;	//stop watchdog timer
-	volatile uint8_t duty_cycle = 45;    //initialize of duty_cycle
+	unsigned int duty_cycle = 45;    //initialize of duty_cycle
 	volatile uint8_t SPIData;
 	volatile uint8_t sens_id, status, temp;
 	volatile int x_pos, x_speed, y_speed, z_speed;
-	int breaking = 0;
+	//int breaking = 0;
 
     #ifdef SPI
         SPI_init();
@@ -77,7 +76,6 @@ int main(void)
 	initClockTo16MHz();
 	LED_init();                 // initialize of LEDs
 	M_init();                   // initialize of H bridge and PWM
-	//SerialInit();
 	LED_RL_ON();
 	LED_RR_ON();
 	timer_B0_init(BLINK_PERIOD);    // timer B0 init
@@ -90,97 +88,79 @@ int main(void)
 /************************** main loop *****************************/
 	    while(true)
 	    {
-	        //duty_cycle = 50;
+	        //duty_cycle = 45;
 	        if(save_calc){
-	            timer_A1_change_period(look_up[duty_cycle - 35]);
-	            //timer_A1_change_period((32768*GYRO_S)/(208*duty_cycle - 5058));
-	            //timer_A1_change_period((32768*GYRO_S)/(201*duty_cycle - 4932));   // change timer period by duty_cycle
-	        save_calc = false;
+                main_buffer[main_buffer_index] = z_speed_avg;
+                main_buffer_index++;
+                first_lap_index++;
+                index_delay++;
 
-	            main_buffer[main_buffer_index] = z_speed_avg;
-	        if(main_buffer_index > 0){
-	        z_all_avg = ((z_all_avg * main_buffer_index) + z_speed_avg)/(main_buffer_index + 1);
-	        }
-	        else
-	            z_all_avg = z_speed_avg;
-            main_buffer_index++;
-            index_delay++;
-            first_lap_index++;
-            if(main_buffer_index >= N_LAP)
-            {
-                LED_RL_OFF();
-                LED_RR_OFF();
-            }
-            if(main_buffer_index >= 2*N_LAP)   // po projeti useku zacneme korelovat
-            {
+                if(main_buffer_index > 0)
+                    z_all_avg = ((z_all_avg * main_buffer_index) + z_speed_avg)/(main_buffer_index + 1);
+                else
+                    z_all_avg = z_speed_avg;
+                //timer_A1_change_period((32768*GYRO_S)/(208*duty_cycle - 5058));
+                //timer_A1_change_period((32768*GYRO_S)/(201*duty_cycle - 4932));   // change timer period by duty_cycle
+
+                if(main_buffer_index >= N_LAP)
+                {
+                    LED_RL_OFF();
+                    LED_RR_OFF();
+                }
+
+                if(main_buffer_index >= 2*N_LAP)   // po projeti useku zacneme korelovat
+                {
                 unsigned int i = 0; unsigned int n = main_buffer_index - N_LAP;
                 long long a = 0;
                 long long b = 0;
-                long long r_tmp = 0;
+                for(i = 0; i < N_LAP; i++){         // auto korelace
+                    a = a + ((main_buffer[i]-z_all_avg) * (main_buffer[i + n]-z_all_avg));
+                    b = b + ((main_buffer[i]-z_all_avg) * (main_buffer[i]-z_all_avg));
+                    }
+                r_xx = ((100*a)/b);
 
-                /*if (!lap_long){
-                    for(; n > (N_LAP/2); n--){
-                        for(i = 0; i < N_LAP; i++){
-                            a = a + ((main_buffer[i]-z_all_avg) * (main_buffer[i + n]-z_all_avg));
-                            b = b + ((main_buffer[i]-z_all_avg) * (main_buffer[i]-z_all_avg));
+                if(r_xx > 100 && index_delay > 10){
+                    if(!lap_long)
+                        lap_long = n;
+                    index_delay = 0;
+                    number_lap++;
+                    first_lap_index = N_LAP;
+                    scanning = false;
+                    LED_FL_TOGGLE();
+                    LED_FR_TOGGLE();
+                    }
+                }
+
+                if(number_lap > 0){
+                    if(-20 > avg_calc(first_lap_index,20) && avg_calc(first_lap_index,20) < 20){    // avg udelat v abs hodnote
+                        if(-25 < main_buffer[first_lap_index + 15] && main_buffer[first_lap_index + 15] < 25){
+                         duty_cycle = 65;
+                         LED_RL_OFF();
+                         LED_RR_OFF();
                         }
-                        r_tmp = ((100*a)/b);
-                        if(r_tmp > r_xx){
-                            r_xx = r_tmp;
-                            lap_long = n;
+                        else{
+                        duty_cycle = 45;
+                        LED_RL_ON();
+                        LED_RR_ON();
                         }
-                    }*/
-
-            for(i = 0; i < N_LAP; i++){
-                a = a + ((main_buffer[i]-z_all_avg) * (main_buffer[i + n]-z_all_avg));
-                b = b + ((main_buffer[i]-z_all_avg) * (main_buffer[i]-z_all_avg));
-                }
-            r_xx = ((100*a)/b);
-            if(r_xx > 100 && index_delay > 10){
-                index_delay = 0;
-                number_lap++;
-                first_lap_index = N_LAP;
-                scanning = false;
-                LED_FL_TOGGLE();
-                LED_FR_TOGGLE();
-                }
-
-
-            }
-            if(number_lap > 0){
-                if(-20 > avg_calc(first_lap_index,20) && avg_calc(first_lap_index,20) < 20){    // avg udelat v abs hodnote
-                    if(-25 < main_buffer[first_lap_index + 15] && main_buffer[first_lap_index + 15] < 25){
-                     duty_cycle = 65;
-                     LED_RL_OFF();
-                     LED_RR_OFF();
-                     breaking = 0;
-                    }
-                    else{
-                    duty_cycle = 35;
-                    LED_RL_ON();
-                    LED_RR_ON();
+                    }else{
+                        if(-25 < main_buffer[first_lap_index + 6] && main_buffer[first_lap_index + 6] < 25){
+                         duty_cycle = 65;
+                         LED_RL_OFF();
+                         LED_RR_OFF();
+                        }
+                        else{
+                        duty_cycle = 45;
+                        LED_RL_ON();
+                        LED_RR_ON();
+                        }
                     }
                 }
-                else{
-                    if(-25 < main_buffer[first_lap_index + 6] && main_buffer[first_lap_index + 6] < 25){
-                     duty_cycle = 65;
-                     LED_RL_OFF();
-                     LED_RR_OFF();
-                     breaking = 0;
-                    }
-                    else{
-                    duty_cycle = 40;
-                    LED_RL_ON();
-                    LED_RR_ON();
-                    }
-                }
+                timer_A1_change_period(look_up[duty_cycle - 35]);
+                M_set_duty_cycle(duty_cycle);
+                save_calc = false;
+	        }       // end of save_calc if
 
-            }
-	        }
-
-
-	        M_set_duty_cycle(duty_cycle);
-	        //SerialWrite();
 
 	#ifdef SPI
 	        //SPI_write_byte(CTRL1 | L3GD20H_WRITE, 0x0F);
@@ -190,33 +170,6 @@ int main(void)
 	        //y_speed_t = SPI_read_byte(OUT_Y_L | L3GD20H_READ);    y_speed_t += SPI_read_byte(OUT_Y_H | L3GD20H_READ) << 8;
 	        //z_speed_t = SPI_read_byte(OUT_Z_L | L3GD20H_READ);    z_speed_t += SPI_read_byte(OUT_Z_H | L3GD20H_READ) << 8;
 	#endif
-	        //x_speed = (int)x_speed_t;
-	        //y_speed = (int)y_speed_t;
-	        z_speed = (int)z_speed_t;
-
-	        /*if(z_speed > 5000){
-	            LED_FL_ON();
-	            LED_FR_OFF();
-	            LED_RL_ON();
-	            LED_RR_ON();
-	            duty_cycle = 48;
-	        }else if(z_speed < -5000){
-	            LED_FR_ON();
-	            LED_FL_OFF();
-	            LED_RL_ON();
-	            LED_RR_ON();
-	            duty_cycle = 48;
-	        }else{
-	            LED_FR_OFF();
-	            LED_FL_OFF();
-	            LED_RL_OFF();
-	            LED_RR_OFF();
-	            duty_cycle = 65;
-	        }*/
-	        //temp = SPI_read_byte(OUT_TEMP | L3GD20H_READ);
-	        real_temp = (int)temp;
-	        //__delay_cycles(3200000);
-
 
     #ifdef I2C  // i2c init
 	    I2C_init(0x20>>1);
@@ -313,7 +266,7 @@ __interrupt void ISR_GYRO_MEASURE(void){
           for(;i > 0; i--){
               z_speed_avg += z_speed_buf[AVERAGING - i];
           }
-          z_speed_avg = z_speed_avg >> 2;
+          z_speed_avg = z_speed_avg >> 2;       // pro 4 musi byt 2
           break;
       default: break;
     }
@@ -361,11 +314,11 @@ void timer_A1_change_period(int period){
     TA1CCR0 = period;
 }
 
-int avg_calc(int act_index, int length){
-    int tmp = 0;
-    int i = act_index - length;
-    for (; i < act_index; i++)
-        tmp += main_buffer[i];
+int avg_calc(unsigned int act_index, unsigned int length){
+    unsigned int tmp = 0;
+    unsigned int i = act_index;
+    for (; i > act_index - length; i--)
+        tmp += abs(main_buffer[i]);
     return tmp/length;
 }
 
