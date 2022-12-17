@@ -14,38 +14,31 @@
 #define BLINK_PERIOD 1024 //2048      // 2048 0.5s ~ 1 Hz //32 768
 #define GYRO_PERIOD 364       // 32 768 Hz, divider /1 ~ 100.2 Hz
 #define AVERAGING 4     // 4
-#define N_LAP 90       // 60
-#define GYRO_S 50       // 50 mm mezi vzorky
+#define N_LAP 90       // pattern lenght for correlation 90*5cm = 4,5 m
 //#define DEBUG
 
 void initClockTo16MHz(void);
 void timer_B0_init(int period);
 void timer_A1_init(int period);
 void timer_A1_change_period(int period);
-int avg_calc(unsigned int act_index, unsigned int length);
-void est_duty_cmp(void);
+int avg_calc(unsigned int act_index, unsigned int length); //function for average calculation
 
-uint16_t results[5];
 uint16_t index;
 unsigned int duty_cycle = 45;    //initialize of duty_cycle
-unsigned int est_duty = 45;
-unsigned int correlation_time = 0;
 
-int real_temp = 0;
 //int x_speed_buf[AVERAGING];
 //int y_speed_buf[AVERAGING];
-int z_speed_buf[AVERAGING];
+int z_speed_buf[AVERAGING]; // averaging buffer
 int index_delay = 0;
 int last_breaking = 0;
-int main_buffer[8000] = {0};         // buffer to 5 min
+int main_buffer[8000] = {0};         // main buffer for angular speed
 unsigned int main_buffer_index = 0;  // actual index of saved acc to main buffer
-unsigned int lap_long = 0;           // number of data in 1 lap
 unsigned int first_lap_index = 0;    // repeating indexes of data from 1 lap
-long long z_speed_avg = 0;
-long long z_all_avg = 0;
-long long r_xx = 0;
-int number_lap = 0;
-int look_up[71] = {500,502,502,502,502,
+long long z_speed_four_avg = 0; // average of sensor data 4 values
+long long z_all_avg = 0; // average of all main buffer data
+long long r_xx = 0; // corelation coeficient
+int number_lap = 0; // actual number lap of race
+int look_up[71] = {500,502,502,502,502,  // timer for data reading start
                    330,502,502,502,502,502,502,502,502,502, //5 rychlejsi posun realne na draze == vetsi perioda
                    502,502,502,502,502,502,502,502,502,502, //15
                    502,502,502,502,502,502,502,502,502,502, //25
@@ -53,8 +46,8 @@ int look_up[71] = {500,502,502,502,502,
                    364,364,364,364,345,/*50*/342,277,266,256,247, //45
                    238,230,222,215,209,/*60*/240,197,191,186,181, //55
                    176,172,168,164,160,156};                //65 - 70
-bool save_calc;
-bool scanning = true;
+bool save_calc; // main program flag
+bool scanning = true; //
 
 // I2C
 uint8_t RX_buffer[I2C_RX_BUFFER_SIZE] = {0};
@@ -102,20 +95,17 @@ int main(void)
 	    {
 	        //duty_cycle = 45;
 	        if(save_calc){
-	            correlation_time = TB0R;
-                main_buffer[main_buffer_index] = z_speed_avg;
+	            main_buffer[main_buffer_index] = z_speed_four_avg;
                 main_buffer_index++;
                 first_lap_index++;
                 index_delay++;
                 last_breaking++;
 
                 if(main_buffer_index > 0)
-                    z_all_avg = ((z_all_avg * main_buffer_index) + z_speed_avg)/(main_buffer_index + 1);
+                    z_all_avg = ((z_all_avg * main_buffer_index) + z_speed_four_avg)/(main_buffer_index + 1);
                 else
-                    z_all_avg = z_speed_avg;
+                    z_all_avg = z_speed_four_avg;
 
-                //timer_A1_change_period((32768*GYRO_S)/(208*duty_cycle - 5058));
-                //timer_A1_change_period((32768*GYRO_S)/(201*duty_cycle - 4932));   // change timer period by duty_cycle
 
                 if(scanning){
                     if(avg_calc(main_buffer_index, 21) > 30)
@@ -144,8 +134,6 @@ int main(void)
                 r_xx = ((100*a)/b);
 
                 if(r_xx > 95 && index_delay > 20){
-                    if(!lap_long)
-                        lap_long = n;
                     index_delay = 0;
                     number_lap++;
                     first_lap_index = N_LAP;
@@ -158,11 +146,11 @@ int main(void)
                     }
                 }
 #ifndef DEBUG
-                    if(z_speed_avg > 25){
+                    if(z_speed_four_avg > 25){
                         LED_FL_ON();
                         LED_FR_OFF();
                     }
-                    else if(z_speed_avg < -25){
+                    else if(z_speed_four_avg < -25){
                         LED_FR_ON();
                         LED_FL_OFF();
                     }
@@ -181,7 +169,7 @@ int main(void)
 
                     //if(-20 > avg_calc(first_lap_index,20) && avg_calc(first_lap_index,20) < 20){    // avg udelat v abs hodnote
                         //if(-30 < main_buffer[first_lap_index + (est_duty-25)>>2] && main_buffer[first_lap_index + (est_duty-25)>>2] < 30){
-                    if(-25 < main_buffer[first_lap_index+5] && main_buffer[first_lap_index+5] < 25 && last_breaking > 14 && -35 < z_speed_avg && z_speed_avg < 35){
+                    if(-25 < main_buffer[first_lap_index+5] && main_buffer[first_lap_index+5] < 25 && last_breaking > 14 && -35 < z_speed_four_avg && z_speed_avg < 35){
                             duty_cycle = 60;       // pro duty_cycle nabihajici po rampe 45/5 vpred, 65/10 vpred
                             LED_RL_OFF();
                             LED_RR_OFF();
@@ -217,8 +205,6 @@ int main(void)
                 timer_A1_change_period(look_up[duty_cycle]);
                 M_set_duty_cycle(duty_cycle);
                 save_calc = false;
-                est_duty_cmp();
-                correlation_time = TB0R - correlation_time;
 	        }       // end of save_calc if
 
 
@@ -326,11 +312,11 @@ __interrupt void ISR_GYRO_MEASURE(void){
           z_speed_buf[index] = (int)z_speed_t >> 8;
           index++;
           unsigned i = AVERAGING;
-          z_speed_avg = 0;
+          z_speed_four_avg = 0;
           for(;i > 0; i--){
-              z_speed_avg += z_speed_buf[AVERAGING - i];
+              z_speed_four_avg += z_speed_buf[AVERAGING - i];
           }
-          z_speed_avg = z_speed_avg >> 2;       // pro 4 musi byt 2
+          z_speed_four_avg = z_speed_four_avg >> 2;       // pro 4 musi byt 2
           break;
       default: break;
     }
@@ -389,46 +375,3 @@ int avg_calc(unsigned int act_index, unsigned int length){
     return tmp/length;
 }
 
-void est_duty_cmp(void){
-    if (est_duty < duty_cycle)
-        est_duty++;
-    else if (est_duty > duty_cycle)
-        est_duty--;
-}
-
-
-/*#pragma vector=ADC12_VECTOR
-__interrupt void ADC12ISR (void)
-{
-  switch(__even_in_range(ADC12IV,34))
-  {
-  case  0: break;                           // Vector  0:  No interrupt
-  case  2: break;                           // Vector  2:  ADC overflow
-  case  4: break;                           // Vector  4:  ADC timing overflow
-  case  6: break;                           // Vector  6:  ADC12IFG0
-  case  8: break;                           // Vector  8:  ADC12IFG1
-  case 10: break;                           // Vector 10:  ADC12IFG2
-  case 12: break;                            // Vector 12:  ADC12IFG3
-  case 14: break;                           // Vector 14:  ADC12IFG4
-  case 16: break;                           // Vector 16:  ADC12IFG5
-  case 18: break;                           // Vector 18:  ADC12IFG6
-  case 20:                            // Vector 20:  ADC12IFG7
-      LED_FL_ON();
-      ADC12CTL0 &=~ADC12SC;                // For sequence-of-Channels mode, ADC12SC must be cleared by software after each sequence to trigger another sequence
-      results[0] = ADC12MEM3;                 // Move results, IFG is cleared
-      results[1] = ADC12MEM4;                 // Move results, IFG is cleared
-      results[2] = ADC12MEM5;                 // Move results, IFG is cleared
-      results[3] = ADC12MEM6;                 // Move results, IFG is cleared
-      results[4] = ADC12MEM7;                 // Move results, IFG is cleared
-      LED_FL_OFF();
-      ADC12CTL0 |= ADC12SC;                   // Start convn - software trigger
-  case 22: break;                           // Vector 22:  ADC12IFG8
-  case 24: break;                           // Vector 24:  ADC12IFG9
-  case 26: break;                           // Vector 26:  ADC12IFG10
-  case 28: break;                           // Vector 28:  ADC12IFG11
-  case 30: break;                           // Vector 30:  ADC12IFG12
-  case 32: break;                           // Vector 32:  ADC12IFG13
-  case 34: break;                           // Vector 34:  ADC12IFG14
-  default: break;
-  }
-}*/
