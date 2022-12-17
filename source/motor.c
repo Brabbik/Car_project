@@ -1,7 +1,7 @@
 /*
  * motor.c
  *
- *  Created on: 29. 9. 2020
+ *  Created on: 10. 10. 2022
  *      Author: brabenec, pohorsky
  */
 

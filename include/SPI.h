@@ -1,8 +1,8 @@
 /*
  * SPI.h
  *
- *  Created on: 16. 9. 2020
- *      Author: dosedel
+ *  Created on: 16. 11. 2022
+ *      Author: brabenec, pohorsky
  */
 
 #ifndef SPI_H_
