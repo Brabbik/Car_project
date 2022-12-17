@@ -14,7 +14,7 @@
 #define BLINK_PERIOD 1024 //2048      // 2048 0.5s ~ 1 Hz //32 768
 #define GYRO_PERIOD 364       // 32 768 Hz, divider /1 ~ 100.2 Hz
 #define AVERAGING 4     // 4
-#define N_LAP 60       // 60
+#define N_LAP 90       // 60
 #define GYRO_S 50       // 50 mm mezi vzorky
 //#define DEBUG
 
@@ -30,7 +30,6 @@ uint16_t index;
 unsigned int duty_cycle = 45;    //initialize of duty_cycle
 unsigned int est_duty = 45;
 unsigned int correlation_time = 0;
-unsigned int speed_offset = 0;
 
 int real_temp = 0;
 //int x_speed_buf[AVERAGING];
@@ -175,12 +174,11 @@ int main(void)
 
 
                 if(number_lap > 0){
-                    if(avg_calc(main_buffer_index, 15) < 3 && last_breaking > 14)
+                    if(avg_calc(main_buffer_index, 15) < 3 && last_breaking > 18)
                         breaking = 4;
-                    else if(avg_calc(main_buffer_index, 22) < 3 && last_breaking > 14)
+                    else if(avg_calc(main_buffer_index, 22) < 3 && last_breaking > 18)
                         breaking = 0;
 
-                    M_DIR_1();
                     //if(-20 > avg_calc(first_lap_index,20) && avg_calc(first_lap_index,20) < 20){    // avg udelat v abs hodnote
                         //if(-30 < main_buffer[first_lap_index + (est_duty-25)>>2] && main_buffer[first_lap_index + (est_duty-25)>>2] < 30){
                     if(-25 < main_buffer[first_lap_index+5] && main_buffer[first_lap_index+5] < 25 && last_breaking > 14 && -35 < z_speed_avg && z_speed_avg < 35){
@@ -189,7 +187,6 @@ int main(void)
                             LED_RR_OFF();
                             }
                         else{
-                            speed_offset = 0;
                             duty_cycle = 45;    // kdyby vyletl 44
                             LED_RL_OFF();
                             LED_RR_OFF();
@@ -200,11 +197,9 @@ int main(void)
                                 LED_RL_ON();
                                 LED_RR_ON();
                                 duty_cycle = 0;
-                                //M_DIR_2();
                                 breaking++;
                                 last_breaking = 0;
                             }
-
                             }
                     /*}else{
                         if(-25 < main_buffer[first_lap_index + 6] && main_buffer[first_lap_index + 6] < 25){
